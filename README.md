@@ -1,6 +1,16 @@
+[![David](https://img.shields.io/david/karibou-ch/karibou-wallet.svg?style=flat)](https://david-dm.org/karibou-ch/karibou-wallet)
+[![Build Status](https://travis-ci.org/karibou-ch/karibou-wallet.svg?branch=master)](https://travis-ci.org/karibou-ch/karibou-wallet)
+[![Join the chat at https://gitter.im/karibou-ch/karibou-wallet](https://badges.gitter.im/karibou-ch/karibou-wallet.svg)](https://gitter.im/karibou-ch/karibou-wallet?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 ## Main usage
+
 The purpose of this project is to provide a simple and intiutive API to handle a simple Wallet manager for your e-commerce. It has bean designed to work on server side.
 
+## Prerequisites
+install node.js with [NVM](https://github.com/creationix/nvm) (required). 
+
+    nvm install v6.9.5
+    nvm use v6.9.5
 
 ## Installation
 From github,    
@@ -23,14 +33,22 @@ and [should.js](https://github.com/visionmedia/should.js). The tests are run sim
 Do not run tests with your live processor. Make sure you are running in a
 sandbox.
 
+## Wallet specification 1.0
+* [specifications of our wallet with Stripe](../../wiki/Wallet-1.0-Specifications-(Stripe-backend))
 
-##Overview
+### Overview
 When using the karibou-wallet api, you basically deal with 3 separate concepts: 
 - wallet (the container of an amount of money),
- - wallet can be a giftcard, it's a kind of floating wallet, it has been designed to be transfered in to a personal wallet
 - transaction (helper to manage charges)
-- transfer (helper to transfer money from/to BANK/Wallet)
+- smartcontract (multiple destinations)
+- transfer information
 
+
+## Authors & spcial thanks :heart:
+
+- David Pate, https://github.com/patedavid
+- Evalet Olivier, https://github.com/evaletolab
+- Noria Foukia Enseignante en mathématiques @HEPIA 
 
 
 ## License
