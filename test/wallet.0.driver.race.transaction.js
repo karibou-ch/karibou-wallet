@@ -14,7 +14,6 @@ describe("driver.mongoose.race.transaction", function(){
   var Wallets=db.model('Wallets');
   var tools=require('../lib/tools');
   var _=require('underscore');
-  var Q=require('q');
 
   before(function(done){
     db.connect(config.option('mongo').name, function () {
@@ -63,7 +62,7 @@ describe("driver.mongoose.race.transaction", function(){
     races.push(Wallets.transaction_charge(userWallet.wid,trans));
     races.push(Wallets.transaction_charge(userWallet.wid,trans));
 
-    Q.all(races).then(function (trx,wallet) {
+    Promise.all(races).then(function (trx,wallet) {
       should.not.exist(trx);
     }).then(undefined,function (error) {
       error.message.should.containEql('The wallet is already running another task')
@@ -109,7 +108,7 @@ describe("driver.mongoose.race.transaction", function(){
     races.push(Wallets.transaction_refund(userWallet.wid,transaction));
     races.push(Wallets.transaction_refund(userWallet.wid,transaction));
 
-    Q.all(races).then(function (trx) {
+    Promise.all(races).then(function (trx) {
       setTimeout(function() {
         should.not.exist(trx);
       }, 10);

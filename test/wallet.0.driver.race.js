@@ -7,7 +7,6 @@ var assert = require('assert');
 var should = require('should');
 var dbtools = require('./fixtures/dbtools');
 var db = require('mongoose');
-var Q=require('q');
 
 describe("driver.mongoose.race.wallet", function(){
   var config = require('../lib/config');
@@ -52,7 +51,7 @@ describe("driver.mongoose.race.wallet", function(){
     races.push(Wallets.create(giftWallet));
 
 
-    Q.all(races).then(function (wallets) {
+    Promise.all(races).then(function (wallets) {
       setTimeout(function() {
         wallets.forEach(function (w) {
           wids[w.wid]=w;

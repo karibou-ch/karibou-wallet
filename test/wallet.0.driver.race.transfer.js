@@ -14,7 +14,6 @@ describe("driver.mongoose.race.transfer", function(){
   var Wallets=db.model('Wallets');
   var tools=require('../lib/tools');
   var _=require('underscore');
-  var Q=require('q');
 
   before(function(done){
     db.connect(config.option('mongo').name, function () {
@@ -66,7 +65,7 @@ describe("driver.mongoose.race.transfer", function(){
     races.push(Wallets.transfer_create(giftWallet.wid,transfer,bank));
     races.push(Wallets.transfer_create(giftWallet.wid,transfer,bank));
 
-    Q.all(races).then(function(wallet) {
+    Promise.all(races).then(function(wallet) {
       should.not.exist(wallet)
     },function (error) {
       error.message.should.containEql('The wallet is already running another task')
@@ -94,7 +93,7 @@ describe("driver.mongoose.race.transfer", function(){
     races.push(Wallets.transferGiftcode(userWallet.wid,card));
     races.push(Wallets.transferGiftcode(userWallet.wid,card));
 
-    Q.all(races).then(function(wallet) {
+    Promise.all(races).then(function(wallet) {
       should.not.exist(wallet)
     },function (error) {
       // this is important, race condition is trigged before the success transfer will' done
