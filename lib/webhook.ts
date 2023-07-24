@@ -4,10 +4,12 @@ import { $stripe, xor } from './payments';
 import Config from './config';
 import { Transaction } from './transaction';
 import { SubscriptionContract } from './contract.subscription';
+import { Customer } from './customer';
 
 export interface WebhookStripe {
   event:string;
   error:boolean;
+  customer?:Customer;
   subscription?: SubscriptionContract;
   transaction?: Transaction;
 }
@@ -62,7 +64,8 @@ export class Webhook {
         const invoice = event.data.object as Stripe.Invoice;
         const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
         const contract = await SubscriptionContract.get(invoice.subscription);
-        return { event: event.type ,contract, transaction,error:true} as WebhookStripe;
+        const customer = await contract.customer();
+        return { event: event.type ,contract, customer, transaction,error:true} as WebhookStripe;
       }
 
 
@@ -73,7 +76,8 @@ export class Webhook {
 
         const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
         const contract = await SubscriptionContract.get(invoice.subscription);
-        return { event: event.type ,contract, transaction ,error:false} as WebhookStripe;
+        const customer = await contract.customer();
+        return { event: event.type ,contract, customer, transaction ,error:false} as WebhookStripe;
       }
 
       // 
@@ -87,12 +91,13 @@ export class Webhook {
           throw new Error("Customer credit is not allowed");
         }
 
-        return { event: event.type ,customer, contract ,error:false} as WebhookStripe;
+        return { event: event.type ,contract, customer ,error:false} as WebhookStripe;
       }
 
 
       //
       // on payment success, 
+      // FIXME, in some case payment_intent.succeeded belongs to invoice.payment_succeeded
       if (event.type === 'payment_intent.succeeded') {
         const payment = event.data.object as Stripe.PaymentIntent;
         if(payment.capture_method == 'automatic') {
@@ -105,6 +110,11 @@ export class Webhook {
         const transaction = await Transaction.get(xor(payment.id));
 
         return { event: event.type ,transaction,error:false} as WebhookStripe;
+      }
+
+      //
+      // Confirm validity when balance is updated, 
+      if (event.type === 'balance.available') {
       }
       
       //
