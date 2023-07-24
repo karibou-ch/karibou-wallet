@@ -179,6 +179,12 @@ export class Customer {
   */
   static async create(email:string, fname:string, lname:string, phone: string, uid:string) {
     try{
+
+      assert(email);
+      assert(uid);
+      assert(fname);
+      assert(lname);
+            
       const stripe = await $stripe.customers.create({
         description: fname + ' ' + lname + ' id:'+uid,
         email: email,
@@ -429,7 +435,7 @@ export class Customer {
   //
   // check if a payment method is valid
   // FIXME: missing test for checkMethods(addIntent:boolean)
-  async checkMethods(addIntent:boolean) {
+  async checkMethods(addIntent:boolean, amount?:number) {
 
     // 
     // make sure that we get the latest
@@ -464,8 +470,12 @@ export class Customer {
       if(dateFromExpiry(card.expiry)<thisMonth) {
         result[method.alias] = {error : "La méthode de paiement a expirée", code: 3};
         continue;
-
       }
+      if(card.issuer=='cash' && amount > this.balance ){
+        result[method.alias] = {error : "Votre portefeuille ne dispose pas de fonds suffisants pour effectuer un achat", code: 3};
+        continue;
+      }
+
 
       result[method.alias] = {
         issuer:card.issuer,
@@ -545,27 +555,7 @@ export class Customer {
   // We can activate his cash balance and also authorize a amount of credit 
   // that represents liability between us and the customer.
   async createCashBalance(month:string,year:string):Promise<CashBalance>{
-    const fingerprint = crypto_fingerprint(this.id+this.uid+'cash');
-    const id = crypto_randomToken();
-    const mo = parseInt(month);
-    if(mo<1 || mo>12 ){
-      throw new Error("Incorret month params")
-    }
-    //
-    // if cash balance exist, a updated one is created
-
-    // if(this._metadata['cashbalance']) {
-    //   throw new Error("Cash balance already exist");
-    // }
-
-    const cashbalance:CashBalance = {
-      type:KngPayment.balance,
-      id:xor(id),
-      alias:(fingerprint),
-      expiry:month+'/'+year,
-      funding:'debit',
-      issuer:'cash'
-    }
+    const cashbalance:CashBalance = createCashMethod(this.id,this.uid,month,year);
 
     //
     // expose Cash Balance to this customer
@@ -624,16 +614,24 @@ export class Customer {
       this._sources = this._sources.data.map(parseMethod);
 
       //
+      // credit customer
+      const creditbalance = this._metadata['creditbalance'];
+
+      //
       // cashbalance
       const cashbalance = this._metadata['cashbalance'];
       if(cashbalance) {
         const payment = JSON.parse(cashbalance) as CashBalance;
         this._sources.push(payment);        
-      }
+      } 
 
       //
-      // credit customer
-      const creditbalance = this._metadata['creditbalance'];
+      // add cash method 
+      else if(this.balance > 0 && !creditbalance) {
+        const payment = createCashMethod(this.id,this.uid,"12","2030");
+        this._sources.push(payment);        
+      }
+
       if(creditbalance) {
         const payment = JSON.parse(creditbalance) as CreditBalance;
         payment.limit = payment.limit ? parseFloat(payment.limit+''):0;
@@ -897,6 +895,31 @@ function parseError(err) {
   return error;
 }
 
+function createCashMethod(_id,uid,month,year) {
+  const fingerprint = crypto_fingerprint(_id+uid+'cash');
+  const id = crypto_randomToken();
+  const mo = parseInt(month);
+  if(mo<1 || mo>12 ){
+    throw new Error("Incorret month params")
+  }
+  //
+  // if cash balance exist, a updated one is created
+
+  // if(this._metadata['cashbalance']) {
+  //   throw new Error("Cash balance already exist");
+  // }
+
+  const cashbalance:CashBalance = {
+    type:KngPayment.balance,
+    id:xor(id),
+    alias:(fingerprint),
+    expiry:month+'/'+year,
+    funding:'debit',
+    issuer:'cash'
+  }
+
+  return cashbalance;
+}
 
 function parseMethod(method) {
   assert(method);
