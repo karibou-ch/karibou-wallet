@@ -135,7 +135,7 @@ describe("Class subscription", function(){
 
     //
     // verify payment
-    const pid = defaultSub.paymentMethodID;
+    const pid = defaultSub.paymentMethod;
     const card = customer.findMethodByID(pid);
     should.exist(card);
 
@@ -149,7 +149,7 @@ describe("Class subscription", function(){
   
       //
       // verify payment
-      const pid = defaultSub.paymentMethodID;
+      const pid = defaultSub.paymentMethod;
       const card = customer.findMethodByID(pid);
       should.exist(card);
       await customer.removeMethod(card);
