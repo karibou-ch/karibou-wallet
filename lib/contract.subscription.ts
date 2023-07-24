@@ -1,7 +1,7 @@
 import { strict as assert } from 'assert';
 import Stripe from 'stripe';
 import { Customer } from './customer';
-import { $stripe, KngPaymentAddress, KngCard, unxor, xor } from './payments';
+import { $stripe, KngPaymentAddress, KngCard, unxor, xor, KngPaymentSource } from './payments';
 import Config from './config';
 
 export type Interval = Stripe.Plan.Interval;
@@ -14,6 +14,7 @@ export interface SubscriptionMetaItem {
   part : string;
   hub : string;
   note : string;
+  vendor: string;
   fees : number;
 }
 
@@ -99,9 +100,14 @@ export class SubscriptionContract {
     return parseShipping(this._subscription.metadata);
   }
 
-  get paymentMethodID() {
-    return xor(this._subscription.default_payment_method as string);
+  get paymentMethod() {
+    return  this._subscription.default_payment_method ? xor(this._subscription.default_payment_method as string): null;
   }
+
+  get paymentCredit() {
+    return this._subscription.metadata.payment_credit;
+  }
+
   //
   // configure the billing cycle anchor to fixed dates (for example, the 1st of the next month).
   // For example, a customer with a monthly subscription set to cycle on the 2nd of the 
@@ -114,6 +120,7 @@ export class SubscriptionContract {
     const elements = this._subscription.items.data.map(parseItem);
     return elements;
   }
+
 
   //
   // return the date of the next billing
@@ -225,7 +232,7 @@ export class SubscriptionContract {
   // - multiple subscription for 
   //   https://stripe.com/docs/billing/subscriptions/multiple-products#multiple-subscriptions-for-a-customer
   //   note: use the same billing_cycle_anchor for the same customer
-  static async create(customer:Customer, card:KngCard, interval:Interval, start_from, shipping:SubscriptionAddress, cartItems, dayOfWeek, fees) {
+  static async create(customer:Customer, card:KngPaymentSource, interval:Interval, start_from, shipping:SubscriptionAddress, cartItems, dayOfWeek, fees) {
     
     // check Date instance
     assert(start_from && start_from.toDateString);
@@ -233,9 +240,6 @@ export class SubscriptionContract {
     assert(shipping.lat);
     assert(shipping.lng);
 
-    if(card.issuer=="invoice") {
-      throw new Error("Le paiement par facture n'est pas disponible pour la souscription");
-    }
 
     // check is subscription must be updated or created
     for(let item of cartItems) {
@@ -247,7 +251,9 @@ export class SubscriptionContract {
     //
     // create metadata karibou model
     // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
-    const metadata = {address: JSON.stringify(shipping,null,0),dayOfWeek};
+    const metadata:any = {address: JSON.stringify(shipping,null,0),dayOfWeek};
+
+
 
     const description = "Contrat : " + interval;
     // FIXME, manage SCA or pexpired card in subscription workflow
@@ -258,13 +264,21 @@ export class SubscriptionContract {
     const options = {
       customer: unxor(customer.id),
       payment_behavior:'allow_incomplete',
-      default_payment_method:unxor(card.id),
       off_session:true,
       description,
       billing_cycle_anchor: start_from, // 3 days before the 1st tuesday of the next week/month
       items:items[interval],
       metadata 
     } as Stripe.SubscriptionCreateParams;
+
+    //
+    // payment method
+    if(card.issuer=="invoice") {
+      metadata.payment_credit=card.alias
+    }else {
+      options.default_payment_method=unxor(card.id);
+    }
+
     try{
       //Config.option('debug') && console.log('---- DBG subscriptions.create',JSON.stringify(options,null,2));
       const subscription = await $stripe.subscriptions.create(options);    
@@ -367,6 +381,7 @@ function createItemsFromCart(cartItems, fees) {
       part : item.part,
       hub : item.hub,
       note : item.note,
+      vendor: item.vendor,
       fees
     }
 
@@ -410,6 +425,7 @@ function parseItem(item: Stripe.SubscriptionItem) {
     note:item.metadata.note,
     part:item.metadata.part,
     sku:item.metadata.sku,
+    vendor:item.metadata.vendor,
     title:item.metadata.title
   }
 }
