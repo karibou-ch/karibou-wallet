@@ -349,7 +349,7 @@ export function stripeParseError(err) {
 		testmode_decline : "A Stripe test card number was used",
 		transaction_not_allowed : "The card has been declined for an unknown reason",
 		try_again_later : "The card has been declined for an unknown reason",
-		withdrawal_count_limit_exceeded : "The customer has exceeded the balance or credit limit available on their card"
+		withdrawal_count_limit_exceeded : "Le client a dépassé le solde ou la limite de crédit disponible sur sa carte"
 	};
 
 	// console.log('---DBG error code',err.type,err.decline_code)
