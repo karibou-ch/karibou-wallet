@@ -249,7 +249,8 @@ export  class  Transaction {
       //
       // CASH BALANCE create a direct charge
       // manual paiement generate the status auth_paid
-      else if (card.type == KngPayment.balance) {
+      // currency must be addressed
+      else if (card.type == KngPayment.balance && customer.cashbalance.available) {
         params.payment_method_types = ['customer_balance'];
         params.payment_method_data= {
           type: 'customer_balance',
@@ -265,7 +266,7 @@ export  class  Transaction {
         params.payment_method = unxor(card.id);
         params.payment_method_types = ['card'];
       } else {
-        throw new Error("balance is insufficient to complete the payment");
+        throw new Error("Votre portefeuille ne dispose pas de fonds suffisants pour effectuer cet achat");
       }
 
       const transaction = await $stripe.paymentIntents.create(params);

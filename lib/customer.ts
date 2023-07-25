@@ -115,12 +115,14 @@ export class Customer {
         available
       });
   
+      // 
+      // FIXME using default currency [0] should be removed
       const currency = Object.keys(balance.available)[0];
       balance.available[currency] = balance.available[currency]/100
       balance['currency']=currency;
       return balance;
     }
-    return this._cashbalance;
+    return { available:null };
   }
 
   // 
