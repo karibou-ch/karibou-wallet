@@ -1,7 +1,7 @@
 import { strict as assert } from 'assert';
 import Stripe from 'stripe';
 import { Customer } from './customer';
-import { $stripe, KngPaymentAddress, KngCard, unxor, xor, KngPaymentSource } from './payments';
+import { $stripe, KngPaymentAddress, KngCard, unxor, xor, KngPaymentSource, round1cts } from './payments';
 import Config from './config';
 
 export type Interval = Stripe.Plan.Interval;
@@ -10,11 +10,12 @@ export type Interval = Stripe.Plan.Interval;
 export interface SubscriptionMetaItem {
   sku: string|number;
   quantity:number;
+  dayOfWeek:number;
   title : string;
-  part : string;
-  hub : string;
-  note : string;
-  vendor: string;
+  part? : string;
+  hub? : string;
+  note? : string;
+  vendor?: string;
   fees : number;
 }
 
@@ -36,10 +37,10 @@ export enum SchedulerStatus {
 
 export enum SchedulerItemFrequency {
   RECURRENT_NONE      = 0,
-  RECURRENT_DAY       = 1,
-  RECURRENT_WEEK      = 2,
-  RECURRENT_2WEEKS    = 3,
-  RECURRENT_MONTH     = 4
+  RECURRENT_DAY       = "day",
+  RECURRENT_WEEK      = "week",
+  RECURRENT_2WEEKS    = "2weeks",
+  RECURRENT_MONTH     = "month"
 }
 
 export interface SubscriptionAddress extends KngPaymentAddress {
@@ -72,7 +73,7 @@ export class SubscriptionContract {
   get interval () { 
     return {
       start:this.billing_cycle_anchor,
-      bill: this._interval, 
+      frequency: this._interval, 
       count:this._interval_count
     } 
   }
@@ -101,7 +102,13 @@ export class SubscriptionContract {
   }
 
   get paymentMethod() {
-    return  this._subscription.default_payment_method ? xor(this._subscription.default_payment_method as string): null;
+    if(this._subscription.metadata.payment_credit){
+      return this._subscription.metadata.payment_credit;
+    }
+    if( this._subscription.default_payment_method) {
+      return xor(this._subscription.default_payment_method as string);
+    }
+    throw new Error("Invalid payment method in subscript "+this.id);
   }
 
   get paymentCredit() {
@@ -236,17 +243,40 @@ export class SubscriptionContract {
     
     // check Date instance
     assert(start_from && start_from.toDateString);
-    assert(shipping.price);
+    assert(fees >= 0);
+    assert(shipping.price >= 0);
     assert(shipping.lat);
     assert(shipping.lng);
 
+    if(fees>1) {
+      throw new Error("Incorrect fees params");
+    }
+
+    if(cartItems.some(item => item.frequency!=interval)){
+      throw new Error("incorrect item format");
+    }
+    const isInvoice = card.issuer == "invoice";
 
     // check is subscription must be updated or created
     for(let item of cartItems) {
       item.product = await findOrCreateProductFromItem(item);
     }
     // group items by interval, day, week, month
-    const items = createItemsFromCart(cartItems,fees);
+    const items = createItemsFromCart(cartItems,0,isInvoice, dayOfWeek);
+
+    //
+    // compute service fees
+    const servicePrice = cartItems.reduce((sum, item) => {
+      return sum + round1cts(item.price * item.quantity * (fees));
+    }, 0)
+
+    //
+    // create an item for karibou.ch service fees and shipping
+    const itemService = await findOrCreateItemService('service','karibou.ch',servicePrice,interval, isInvoice,dayOfWeek)
+    const itemShipping = await findOrCreateItemService('shipping','karibou.ch',shipping.price,interval, isInvoice,dayOfWeek)
+
+    items.push(itemService);
+    items.push(itemShipping);
 
     //
     // create metadata karibou model
@@ -255,7 +285,7 @@ export class SubscriptionContract {
 
 
 
-    const description = "Contrat : " + interval;
+    const description = "Contrat : " + interval + " for "+ customer.uid;
     // FIXME, manage SCA or pexpired card in subscription workflow
     //
     // payment_behavior for 3ds or expired card 
@@ -267,15 +297,17 @@ export class SubscriptionContract {
       off_session:true,
       description,
       billing_cycle_anchor: start_from, // 3 days before the 1st tuesday of the next week/month
-      items:items[interval],
+      items:items,
       metadata 
     } as Stripe.SubscriptionCreateParams;
 
     //
     // payment method
+    // use invoice default_pament_method for Stripe 
     if(card.issuer=="invoice") {
-      metadata.payment_credit=card.alias
-    }else {
+      metadata.payment_credit=card.id;
+      options.payment_settings = {}
+    } else {
       options.default_payment_method=unxor(card.id);
     }
 
@@ -365,69 +397,97 @@ async function findOrCreateProductFromItem(item) {
   return created.id;
 }
 
+async function findOrCreateItemService(id,description,price, interval, isInvoice, dayOfWeek) {
+  const products = await $stripe.products.search({
+    query:"active:'true' AND name:'"+id+"'", limit:1
+  })
+  let product;
+  if(products && products.data.length) {
+    product = products.data[0].id;
+  } else {
+    product = await $stripe.products.create({
+      name: id,
+      description:description
+    });  
+  }
+
+
+  //
+  // missing fees (see documentation for fees inclusion)
+  const serviceItem:SubscriptionItem = { 
+    currency : 'CHF', 
+    unit_amount : isInvoice? 0:parseInt(price),
+    product : product,
+    recurring : { interval, interval_count: 1 }
+  };
+  const metadata:SubscriptionMetaItem = {
+    sku : id,
+    title: description,
+    quantity: 1,
+    fees: (price).toFixed(2),
+    dayOfWeek
+  }
+
+  return {metadata, quantity: 1,price_data:serviceItem};
+}
+
 //
 // only for week or month subscription
 // day subscription is a special case
-function createItemsFromCart(cartItems, fees) {
-  const itemCreation = (item, interval ) => {
-    const interval_count = {
-      'week':1,
-      'month':1
-    }
+function createItemsFromCart(cartItems, fees, isInvoice, dayOfWeek) {
+  const itemCreation = (item ) => {
+
     const metadata:SubscriptionMetaItem ={
       sku : item.sku,
       quantity: item.quantity,
+      dayOfWeek:dayOfWeek,
       title : item.title,
       part : item.part,
       hub : item.hub,
       note : item.note,
-      vendor: item.vendor,
+      vendor: item.vendor ||'',
       fees
     }
 
-    const price = (item.price * (1 + fees) * 100).toFixed(0);
+    const price = round1cts(item.price * 100).toFixed(2);
 
     //
     // missing fees (see documentation for fees inclusion)
     const instance:SubscriptionItem = { 
       currency : 'CHF', 
-      unit_amount : parseInt(price),                
+      unit_amount : (isInvoice ? 0:parseInt(price)),
       product : item.product,
-      recurring : { interval, interval_count: interval_count[interval] }
+      recurring : { 
+        interval:item.frequency, 
+        interval_count: 1 
+      }
     };
 
     return {metadata, quantity: item.quantity,price_data:instance};
   }
 
-  if(fees>1) {
-    throw new Error("Incorrect params");
-  }
-
   //
   // prepare items for Stripe Schedule
-  const week = cartItems.filter(item => item.frequency == SchedulerItemFrequency.RECURRENT_WEEK).map(i => itemCreation(i,'week'));
-  const month = cartItems.filter(item => item.frequency == SchedulerItemFrequency.RECURRENT_MONTH).map(i => itemCreation(i,'month'));
+  const items = cartItems.map(i => itemCreation(i));
 
-  return {week,month};
+  return items;
 }
 
 
 //
 // parse subscription Item
 function parseItem(item: Stripe.SubscriptionItem) {
-  return {
+  const result = {
     unit_amount:item.price.unit_amount,
     currency:item.price.currency,
     quantity:(item.quantity),
     dayOfWeek:parseInt(item.metadata.dayOfWeek),
     fees:parseFloat(item.metadata.fees),
-    hub:item.metadata.hub,
-    note:item.metadata.note,
-    part:item.metadata.part,
     sku:item.metadata.sku,
-    vendor:item.metadata.vendor,
     title:item.metadata.title
-  }
+  };
+  ["note","hub","part","vendor"].filter(key => item[key]).forEach(key=> result[key]=item[key]);
+  return result;
 }
 
 //

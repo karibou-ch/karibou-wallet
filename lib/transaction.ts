@@ -164,7 +164,7 @@ export  class  Transaction {
   }
 
   /**
-  * ## transaction.get(id)
+  * ## transaction.authorize(...)
   * Create a new 2-steps transaction (auth & capture)
   * - https://stripe.com/docs/payments/customer-balance#make-cash-payment
   * @returns the transaction object
@@ -173,10 +173,13 @@ export  class  Transaction {
   static async authorize(customer:Customer,card:KngCard, amount:number, options:PaymentOptions) {
 
     assert(options.oid)
-    assert(options.shipping)
-    assert(options.shipping.streetAdress)
-    assert(options.shipping.postalCode)
-    assert(options.shipping.name)
+    //
+    // optional shipping
+    if(options.shipping) {
+      assert(options.shipping.streetAdress)
+      assert(options.shipping.postalCode)
+      assert(options.shipping.name)  
+    }
 
     //
     // undefined or 0 amount throw an error
@@ -190,16 +193,8 @@ export  class  Transaction {
 
     // assert amount_capturable > 100
 		const amount_capturable = Math.round((amount-availableCustomerCredit)*100);
-		const tx_description = "#"+options.oid+" for "+options.email;
+		const tx_description = "#"+options.oid+" for "+customer.email;
     const tx_group = options.txgroup;
-		const shipping = {
-			address: {
-				line1:options.shipping.streetAdress,
-				postal_code:options.shipping.postalCode,
-				country:'CH'
-			},
-			name: options.shipping.name
-		};
 
 
     //
@@ -210,20 +205,33 @@ export  class  Transaction {
     // ==> idempotencyKey: options.oid,
 
     try{
+      const capture_method = (options.charge) ? "automatic":"manual";
       const params={
         amount:amount_capturable,
         currency: "CHF",
         customer:unxor(customer.id),
         transfer_group: tx_group,
         off_session: false,
-        capture_method:'manual', // capture amount offline (server side)
+        capture_method: capture_method, // capture amount offline (server side)
         confirm: true,
-        shipping: shipping,
         description: tx_description,
         metadata: {
           order: options.oid
         },
       } as Stripe.PaymentIntentCreateParams;
+
+      //
+      // optional shipping
+      if(options.shipping) {
+        params.shipping = {
+          address: {
+            line1:options.shipping.streetAdress,
+            postal_code:options.shipping.postalCode,
+            country:'CH'
+          },
+          name: options.shipping.name    
+        }
+      }
 
       //
       // use customer credit instead of KngCard
@@ -291,6 +299,7 @@ export  class  Transaction {
   }
 
 
+
   /**
   * ## transaction.get(id)
   * Get transaction object from order api
@@ -354,6 +363,16 @@ export  class  Transaction {
     return new Transaction(transaction);
    }
 
+  //
+  // update status when transaction (capture_method) is automatic
+  // prepaid is an eq of paid  
+  async updateStatusPrepaid() {    
+    const metadata = this._payment.metadata;
+    metadata.exended_status = 'prepaid';
+    this._payment = await $stripe.paymentIntents.update(this._payment.id, {metadata});  
+
+  }
+
   /**
   * ## transaction.capture()
   * Capture the amount on an authorized transaction
@@ -396,6 +415,7 @@ export  class  Transaction {
         currency: "CHF",
         customer:(payment.customer as string),
         payment_method: (payment.payment_method as string), 
+        payment_method_types : ['card'],
         transfer_group: this.group,
         off_session: true,
         capture_method:'automatic', 

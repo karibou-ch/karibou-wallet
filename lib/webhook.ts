@@ -43,6 +43,29 @@ export class Webhook {
       throw err;
     }
 
+    //
+    // all events for subscription https://stripe.com/docs/billing/subscriptions/webhooks
+    //
+    // ** lors de la pause/unpause
+    // customer.subscription.paused
+    // customer.subscription.resumed
+    //
+    // ** normalement c'est uniquement à la création
+    // invoice.payment_action_required
+    //
+    // ** lorsque la carte n'est plus disponible
+    // ** smart-retries
+    // ** ici https://stripe.com/docs/billing/revenue-recovery/smart-retries
+    // ** on peut accepter la commande avec le paiement par facture (option invoice)
+    // invoice.payment_failed
+    //
+    // ** qq jours avant le renouvellement de l'abo
+    // invoice.upcoming
+    //
+    // ** lorsque l'utilisateur a été modifié
+    // customer.updated
+    // ** lorsque la balance à été modifiée positivement
+    // customer.balance_funded
     try {
 
       //
@@ -71,12 +94,24 @@ export class Webhook {
 
       // 
       // on invoice payment success with VISA/MC
+      // only for subscription
       if(event.type == 'invoice.payment_succeeded' && event.data.object.payment_intent) {
         const invoice = event.data.object as Stripe.Invoice;
-
         const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        //
+        // be sure that invoice concerne a subscription
+        if(!invoice.subscription) {
+          return { event: event.type, transaction ,error:false} as WebhookStripe;  
+        }
+
+
         const contract = await SubscriptionContract.get(invoice.subscription);
         const customer = await contract.customer();
+
+        //
+        // finalement update le status as PREPAID pour l'afficher dans l'application
+        await transaction.updateStatusPrepaid();
+
         return { event: event.type ,contract, customer, transaction ,error:false} as WebhookStripe;
       }
 
@@ -94,27 +129,12 @@ export class Webhook {
         return { event: event.type ,contract, customer ,error:false} as WebhookStripe;
       }
 
-
-      //
-      // on payment success, 
-      // FIXME, in some case payment_intent.succeeded belongs to invoice.payment_succeeded
-      if (event.type === 'payment_intent.succeeded') {
-        const payment = event.data.object as Stripe.PaymentIntent;
-        if(payment.capture_method == 'automatic') {
-          payment.metadata.exended_status = 'prepaid';
-        }
-
-        const prepaid = await $stripe.paymentIntents.update(payment.id,{
-          metadata:payment.metadata
-        });        
-        const transaction = await Transaction.get(xor(payment.id));
-
-        return { event: event.type ,transaction,error:false} as WebhookStripe;
-      }
-
       //
       // Confirm validity when balance is updated, 
-      if (event.type === 'balance.available') {
+      if (event.type == 'customer.balance_funded') {
+        const balance = event.data.object as Stripe.CustomerBalanceTransaction;
+        const customer = await Customer.get(balance.customer);
+        return { event: event.type ,customer ,error:false} as WebhookStripe;
       }
       
       //

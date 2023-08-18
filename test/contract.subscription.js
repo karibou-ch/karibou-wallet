@@ -72,11 +72,27 @@ describe("Class subscription", function(){
   });
 
   // Simple weekly souscription 
-  it("SubscriptionContract create weekly", async function() {
+  it("SubscriptionContract create weekly with invalid item", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
     const items = cartItems.slice();
+    try{
+      const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+      defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,shipping,items,dayOfWeek,fees)
+      throw "error";
+    }catch(err){
+      err.message.should.containEql('incorrect item format')
+    }
+
+  });  
+
+  // Simple weekly souscription 
+  it("SubscriptionContract create weekly", async function() {
+
+    const fees = 0.06;
+    const dayOfWeek= 2; // tuesday
+    const items = cartItems.filter(item => item.frequency == "week");
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,shipping,items,dayOfWeek,fees)
@@ -85,7 +101,7 @@ describe("Class subscription", function(){
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("items");
-    defaultSub.items.length.should.equal(2);
+    defaultSub.items.length.should.equal(4);
 
     // console.log('---- DBG sub',defaultSub);
     // console.log('---- DBG sub',defaultSub.id);
@@ -100,7 +116,7 @@ describe("Class subscription", function(){
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
-    const items = cartItems.slice();
+    const items = cartItems.filter(item => item.frequency == "month");
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"month",dateValid,shipping,items,dayOfWeek,fees)
@@ -109,13 +125,13 @@ describe("Class subscription", function(){
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("items");
-    defaultSub.items.length.should.equal(1);
+    defaultSub.items.length.should.equal(3);
 
     // console.log('---- DBG sub',defaultSub.id);
     // console.log('---- DBG sub',defaultSub.description);
     // console.log('---- DBG sub',defaultSub.status);
     // console.log('---- DBG sub',defaultSub.interval);
-    // console.log('---- DBG sub',defaultSub.items[0]);
+    //console.log('---- DBG sub',defaultSub.items);
   });
 
   it("SubscriptionContract get default payment method and customer from id", async function() {
@@ -126,7 +142,7 @@ describe("Class subscription", function(){
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("items");
-    defaultSub.items.length.should.equal(1);
+    defaultSub.items.length.should.equal(3);
 
     //
     // verify customer 
@@ -179,7 +195,7 @@ describe("Class subscription", function(){
 
   it("pause weekly sub for 30 days", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
-    const contract = contracts.find(contract => contract.interval.bill == 'week');
+    const contract = contracts.find(contract => contract.interval.frequency == 'week');
 
     should.exist(contract);
     await contract.pause(pausedUntil);
@@ -188,7 +204,7 @@ describe("Class subscription", function(){
 
   it("manualy resume paused sub ", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
-    const contract = contracts.find(contract => contract.interval.bill == 'week');
+    const contract = contracts.find(contract => contract.interval.frequency == 'week');
 
     should.exist(contract);
     await contract.resumeManualy();

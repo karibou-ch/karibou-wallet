@@ -13,7 +13,7 @@ module.exports = [
     finalprice: 7.6,
   },
   {
-    frequency:2, // week;
+    frequency:"week", // week;
     timestamp: Date.now(),
     hub: 'mocha',
     sku: 1000013,
@@ -25,7 +25,7 @@ module.exports = [
     finalprice: 14.5,
   },
   {
-    frequency:2, // week;
+    frequency:"week", // week;
     timestamp: Date.now(),
     hub: 'mocha',
     sku: 1000014,
@@ -37,7 +37,7 @@ module.exports = [
     finalprice: 14.5,
   },
   {
-    frequency:4, // month;
+    frequency:"month", // month;
     timestamp: Date.now(),
     hub: 'mocha',
     sku: 1000014,
