@@ -151,7 +151,7 @@ export class SubscriptionContract {
 
   async customer(){
     try{
-      return Customer.get(this._subscription.customer);
+      return await Customer.get(this._subscription.customer);
     }catch(err){
       return {deleted:true} as Customer;
     }

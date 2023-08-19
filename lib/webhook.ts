@@ -121,9 +121,6 @@ export class Webhook {
 
         const contract = await SubscriptionContract.get(invoice.subscription);
         const customer = await contract.customer();
-        if (!customer.allowedCredit()){
-          throw new Error("Customer credit is not allowed");
-        }
 
         return { event: event.type ,contract, customer ,error:false} as WebhookStripe;
       }
