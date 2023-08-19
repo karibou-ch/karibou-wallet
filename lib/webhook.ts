@@ -75,10 +75,9 @@ export class Webhook {
 
         //
         // verify if payment method muste be updated
-
         const contract = await SubscriptionContract.get(invoice.subscription);
-        
-        return { event: event.type,contract,error:false} as WebhookStripe;
+        const customer = await contract.customer();        
+        return { event: event.type,contract,customer,error:false} as WebhookStripe;
       }
 
       // 
@@ -88,7 +87,7 @@ export class Webhook {
         const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
         const contract = await SubscriptionContract.get(invoice.subscription);
         const customer = await contract.customer();
-        return { event: event.type ,contract, customer, transaction,error:true} as WebhookStripe;
+        return { event: event.type ,contract, customer, transaction,error:false} as WebhookStripe;
       }
 
 

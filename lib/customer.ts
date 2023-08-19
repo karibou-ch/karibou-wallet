@@ -74,6 +74,10 @@ export class Customer {
   get id() {
     return xor(this._id);
   }
+
+  get deleted() {
+    return false;
+  }
   
   get email() {
     return this._email;
@@ -248,6 +252,9 @@ export class Customer {
       const stripeMock = (Config.option('sandbox') && id.stripeMock);
       const stripe_id = (id.indexOf&&id.indexOf('cus_')>-1) ? id:unxor(id);
       const stripe = stripeMock || (await $stripe.customers.retrieve(stripe_id,{expand: ['cash_balance']})) as any;
+      if(stripe.deleted) {
+        throw new Error("Ce compte client a été définitivement supprimé")
+      }
       const customer = new Customer(
         stripe.id,
         stripe.email,
