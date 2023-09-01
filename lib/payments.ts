@@ -86,6 +86,7 @@ export interface KngPaymentAddress {
   streetAddress:string;
   region:string;
   postalCode:string;  
+  phone?:string;
   lat:number;
   lng:number;
 }

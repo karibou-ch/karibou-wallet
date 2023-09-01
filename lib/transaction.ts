@@ -552,7 +552,7 @@ export  class  Transaction {
 			// 3. https://stripe.com/docs/error-codes#charge-expired-for-capture
 			if(msg.indexOf('PaymentIntent could not be captured because it has a status of canceled') == -1 &&
 				msg.indexOf(' the charge has expired') == -1 ){
-				throw new Error(err);
+				throw (err);
 			}
 
 			this._payment = await _force_recapture(amount);

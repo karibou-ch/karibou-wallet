@@ -9,6 +9,7 @@ import { Customer } from './customer';
 export interface WebhookStripe {
   event:string;
   error:boolean;
+  balance?:boolean;
   customer?:Customer;
   subscription?: SubscriptionContract;
   transaction?: Transaction;
@@ -45,6 +46,9 @@ export class Webhook {
 
     //
     // all events for subscription https://stripe.com/docs/billing/subscriptions/webhooks
+    //
+    // *** Lifecycle ***
+    // - https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
     //
     // ** lors de la pause/unpause
     // customer.subscription.paused

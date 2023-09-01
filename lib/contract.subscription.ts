@@ -4,34 +4,41 @@ import { Customer } from './customer';
 import { $stripe, KngPaymentAddress, KngCard, unxor, xor, KngPaymentSource, round1cts } from './payments';
 import Config from './config';
 
+
+//
+// to avoir billing error we need to know any error 3 days before the shipping
+export const MAXDAY_INTERVAL_MONTH = 26;
+export const MAXDAY_INTERVAL_BEFORE_SHIPPING = 3;
+
 export type Interval = Stripe.Plan.Interval;
 
-
-export interface SubscriptionMetaItem {
-  sku: string|number;
-  quantity:number;
-  dayOfWeek:number;
-  title : string;
-  part? : string;
-  hub? : string;
-  note? : string;
-  vendor?: string;
-  fees : number;
+export interface SubscriptionProductItem{
+  unit_amount: number,
+  currency:string,
+  quantity:number,
+  fees:number,
+  sku:number|string,
+  title:string,
+  note: string,
+  part: string,
+  variant?:string
 }
 
-export interface SubscriptionItem {
-  currency:string;
-  unit_amount:number;
-  product:string;
-  recurring:{
-    interval:Interval;
-    interval_count: number;
-  }
-  metadata?:SubscriptionMetaItem;
+export interface SubscriptionServiceItem{
+  unit_amount:number,
+  quantity:number,
+  fees:Number,
+  id:string
 }
+
 
 export enum SchedulerStatus {
-  active = 1, paused, pending, closed
+  active = "active", 
+  paused="paused", 
+  pending="pending", 
+  incomplete="incomplete", 
+  trialing="trialing",
+  cancel="cancel"
 }
 
 
@@ -44,10 +51,58 @@ export enum SchedulerItemFrequency {
 }
 
 export interface SubscriptionAddress extends KngPaymentAddress {
-  price: number;
-  dayOfWeek?: number;
+  price?:number;
 }
   
+export interface Subscription {
+  id:string,
+  customer: string,
+  description: string,
+  start:Date,
+  nextBilling:Date,
+  pauseUntil: Date|0,
+  frequency:SchedulerItemFrequency,
+  dayOfWeek:number,
+  status:string,
+  issue?:string,
+  shipping: SubscriptionAddress,
+  items: SubscriptionProductItem[],
+  services: SubscriptionServiceItem[]
+};
+
+export const subscriptionGetNextBillingMonth = (billing_cycle_anchor)=> {
+  const now = new Date();
+  if (now.getMonth() == 11) {
+      return new Date(now.getFullYear() + 1, 0, billing_cycle_anchor.getDate());
+  }
+
+  return new Date(now.getFullYear(), now.getMonth() + 1, billing_cycle_anchor.getDate());
+}
+
+//
+// internal description
+// when item is a service, sku define the id (logistic, karibou.ch or others)
+interface SubscriptionMetaItem {
+  type:"product"|"service",
+  sku: string|number;
+  quantity:number;
+  title : string;
+  part? : string;
+  variant? : string;
+  note? : string;
+  fees : string|number;
+}
+
+interface SubscriptionItem {
+  currency:string;
+  unit_amount:number;
+  product:string;
+  recurring:{
+    interval:Interval;
+    interval_count: number;
+  }
+  metadata?:SubscriptionMetaItem;
+}
 
 /** 
   contractId
@@ -58,8 +113,6 @@ export interface SubscriptionAddress extends KngPaymentAddress {
 export class SubscriptionContract {
 
   private _subscription: Stripe.Subscription; 
-  private _status:SchedulerStatus;
-  private _id:string;
   private _interval:Interval;
   private _interval_count:number;
 
@@ -74,7 +127,8 @@ export class SubscriptionContract {
     return {
       start:this.billing_cycle_anchor,
       frequency: this._interval, 
-      count:this._interval_count
+      count:this._interval_count,
+      dayOfWeek: +this._subscription.metadata.dayOfWeek
     } 
   }
   
@@ -84,16 +138,71 @@ export class SubscriptionContract {
     if(this._subscription.pause_collection) {
       return 'paused';
     }
-
-    return this._subscription.status 
+    //
+    // incomplete, incomplete_expired, trialing, active, past_due, canceled, or unpaid.
+    const stripeStatus = this._subscription.status.toString();
+    switch(stripeStatus){
+      case "incomplete":
+      case "unpaid":
+      case "incomplete_expired":
+      case "past_due":
+      return "incomplete";
+      default:
+      return stripeStatus;
+    } 
   }
-  get description () { return (this._subscription as any).description }
+  get content ():Subscription { 
+    const frequency = (this.interval.frequency.toString() as SchedulerItemFrequency)
+    const today = new Date();
 
-  get pausedUntil() {
-    if(this._subscription.pause_collection && this._subscription.pause_collection.resumes_at) {
-      return (this._subscription.pause_collection.resumes_at) || 0;
+
+    let nextBilling = new Date();
+
+    //
+    // week case next billing is always 3 days before the shipping
+    // - Saturday for Tuesday (mar 2)
+    // - Sunday for Wednesday (mer 3)
+    // - Monday for Thusday (jeu 4)
+    if(frequency == "week"){
+      const distance = (this.interval.dayOfWeek + 7 - nextBilling.getDay()) % 7;
+      if((today.getDay()+MAXDAY_INTERVAL_BEFORE_SHIPPING)<=(this.interval.dayOfWeek)){
+        nextBilling = new Date(this.interval.start.getTime() + 7 * 24 * 60 * 60 * 1000);
+      }
+      nextBilling.setDate(nextBilling.getDate() + distance);
     }
-    return 0
+
+    //
+    // month case next billing is always before the 27 of the month
+    if(frequency == "month"){
+      if(this.interval.start.getDate()<=(today.getDate()+1)){
+        nextBilling = subscriptionGetNextBillingMonth(this.interval.start)
+      }else {
+        nextBilling = new Date(today.getFullYear(), today.getMonth() + 1, this.interval.start.getDate());
+      }
+    }
+
+    return{
+      id: xor(this._subscription.id),
+      customer: this._subscription.metadata.uid,
+      description: this._subscription.description.toString(),
+      start:this.interval.start,
+      nextBilling: nextBilling,
+      pauseUntil: this.pausedUntil,
+      frequency:(this.interval.frequency.toString() as SchedulerItemFrequency),
+      dayOfWeek:(+this._subscription.metadata.dayOfWeek),
+      status:this.status,
+      issue:this._subscription.status.toString(),
+      shipping: this.shipping,    
+      items: this.items,
+      services: this.serviceItems
+    } as Subscription;
+  }
+
+  get pausedUntil(): Date|0 {
+    if(this._subscription.pause_collection && this._subscription.pause_collection.resumes_at) {
+      return new Date(this._subscription.pause_collection.resumes_at * 1000 );
+    }
+    return 0;
   }
   //
   // return the delivery shippping and date for which the subscription is scheduled
@@ -123,21 +232,16 @@ export class SubscriptionContract {
     return new Date(this._subscription.billing_cycle_anchor * 1000 );
   }
 
-  get items():any[]{
-    const elements = this._subscription.items.data.map(parseItem);
+  get items():SubscriptionProductItem[]{
+    const elements = this._subscription.items.data.filter(item => item.metadata.type == 'product');
+    return elements.map(parseItem);;
+  }
+
+  get serviceItems():SubscriptionServiceItem[]{
+    const elements = this._subscription.items.data.filter(item => item.metadata.type == 'service').map(parseServiceItem);
     return elements;
   }
 
-
-  //
-  // return the date of the next billing
-  getNextBillingDay() {
-    const dayOfBilling = this.billing_cycle_anchor;
-    const today = new Date();
-    const month = (today.getDate()> dayOfBilling.getDate())? today.getMonth()+1:today.getMonth();
-    const billing = new Date(today.getFullYear(),month,dayOfBilling.getDate());
-    return { billing, dayOfWeek: this.shipping.dayOfWeek};
-  }
 
   //
   // update the billing_cycle_anchor for the next billing (min 2 days before the next delivery)
@@ -181,7 +285,6 @@ export class SubscriptionContract {
   // sub will resume on {to} Date ({to} billing must be aligned 2-3 days before the dayOfWeek delivery) 
   // https://stripe.com/docs/billing/subscriptions/pause
   async pause(to:Date) {
-    const customer = this._subscription.customer as string;
     const metadata = this._subscription.metadata;
 
     // Stripe won’t send any upcoming invoice emails or webhooks for these invoices 
@@ -194,7 +297,7 @@ export class SubscriptionContract {
     if (to){
       if(!to.toDateString) throw new Error("resume date is incorrect");
       metadata.to = to.getTime()+'';
-      behavior.resumes_at=to.getTime();
+      behavior.resumes_at=parseInt(to.getTime()/1000+'');
     }
 
     metadata.from = Date.now()+'';
@@ -246,13 +349,21 @@ export class SubscriptionContract {
   static async create(customer:Customer, card:KngPaymentSource, interval:Interval, start_from, shipping:SubscriptionAddress, cartItems, dayOfWeek, fees) {
     
     // check Date instance
-    assert(start_from && start_from.toDateString);
+    assert(start_from && start_from.getTime());
     assert(fees >= 0);
     assert(shipping.price >= 0);
     assert(shipping.lat);
     assert(shipping.lng);
 
-    if(fees>1) {
+    //
+    // validate start_from when interval is month
+    if(interval == "month" && start_from.getDate()>MAXDAY_INTERVAL_MONTH){
+      throw new Error("L'abonnement mensuel ne peut pas commencer en fin de mois");
+    }
+
+    //
+    // validate fees range [0..1]
+    if(fees>1 || fees <0) {
       throw new Error("Incorrect fees params");
     }
 
@@ -266,7 +377,7 @@ export class SubscriptionContract {
       item.product = await findOrCreateProductFromItem(item);
     }
     // group items by interval, day, week, month
-    const items = createItemsFromCart(cartItems,0,isInvoice, dayOfWeek);
+    const items = createItemsFromCart(cartItems,0,isInvoice);
 
     //
     // compute service fees
@@ -276,8 +387,8 @@ export class SubscriptionContract {
 
     //
     // create an item for karibou.ch service fees and shipping
-    const itemService = await findOrCreateItemService('service','karibou.ch',servicePrice,interval, isInvoice,dayOfWeek)
-    const itemShipping = await findOrCreateItemService('shipping','karibou.ch',shipping.price,interval, isInvoice,dayOfWeek)
+    const itemService = await findOrCreateItemService('service','karibou.ch',servicePrice,interval, isInvoice)
+    const itemShipping = await findOrCreateItemService('shipping','karibou.ch',shipping.price,interval, isInvoice)
 
     items.push(itemService);
     items.push(itemShipping);
@@ -285,16 +396,19 @@ export class SubscriptionContract {
     //
     // create metadata karibou model
     // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
-    const metadata:any = {address: JSON.stringify(shipping,null,0),dayOfWeek};
+    const metadata:any = {address: JSON.stringify(shipping,null,0),dayOfWeek,uid:customer.uid};
 
 
 
-    const description = "Contrat : " + interval + " for "+ customer.uid;
+    const description = "contrat:" + interval + ":"+ customer.uid;
     // FIXME, manage SCA or pexpired card in subscription workflow
     //
     // payment_behavior for 3ds or expired card 
     // - pending_if_incomplete is used when update existing subscription
     // - allow_incomplete accept subscript delegate the payment in external process
+    // Testing
+    // - https://stripe.com/docs/billing/subscriptions/build-subscriptions?ui=elements#test
+    // - https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
     const options = {
       customer: unxor(customer.id),
       payment_behavior:'allow_incomplete',
@@ -316,8 +430,22 @@ export class SubscriptionContract {
     }
 
     try{
-      //Config.option('debug') && console.log('---- DBG subscriptions.create',JSON.stringify(options,null,2));
       const subscription = await $stripe.subscriptions.create(options);    
+      //
+      // At this moment (SCA Life cycle)
+      // - payment can be pending (SCA auth, or other situation) 
+      // - With the value subscription.pending_setup_intent (as Stripe.SetupIntent)
+      // A) IF status === "requires_action"   
+      // - Frontend should confirm 
+      //   $stripe.confirmCardSetup(intent.client_secret)
+      //   - Display error.message in your UI.
+      //   - The setup has succeeded.
+      // B) IF status === "requires_payment_method"
+      // - Frontend - Customer collect new payment method (an other SCA Lifecycle)
+      //   $stripe.confirmCardSetup(intent.client_secret)
+      //   On success, inform K.API for the new payment (subscription.updatePaymentMethod)
+      //   On Error, inform K.API the subscription is cancel
+      //   After a while, subscription is deleted
       return new SubscriptionContract(subscription);  
     }catch(err) {
       throw parseError(err);
@@ -401,7 +529,7 @@ async function findOrCreateProductFromItem(item) {
   return created.id;
 }
 
-async function findOrCreateItemService(id,description,price, interval, isInvoice, dayOfWeek) {
+async function findOrCreateItemService(id,description,price:number, interval, isInvoice) {
   const products = await $stripe.products.search({
     query:"active:'true' AND name:'"+id+"'", limit:1
   })
@@ -420,16 +548,16 @@ async function findOrCreateItemService(id,description,price, interval, isInvoice
   // missing fees (see documentation for fees inclusion)
   const serviceItem:SubscriptionItem = { 
     currency : 'CHF', 
-    unit_amount : isInvoice? 0:parseInt(price),
+    unit_amount : isInvoice? 0:(price*100),
     product : product,
     recurring : { interval, interval_count: 1 }
   };
   const metadata:SubscriptionMetaItem = {
     sku : id,
+    type:"service",
     title: description,
     quantity: 1,
-    fees: (price).toFixed(2),
-    dayOfWeek
+    fees: (isInvoice ? 0:price.toFixed(2)),
   }
 
   return {metadata, quantity: 1,price_data:serviceItem};
@@ -438,19 +566,21 @@ async function findOrCreateItemService(id,description,price, interval, isInvoice
 //
 // only for week or month subscription
 // day subscription is a special case
-function createItemsFromCart(cartItems, fees, isInvoice, dayOfWeek) {
+function createItemsFromCart(cartItems, fees, isInvoice) {
   const itemCreation = (item ) => {
 
     const metadata:SubscriptionMetaItem ={
       sku : item.sku,
+      type:"product",
       quantity: item.quantity,
-      dayOfWeek:dayOfWeek,
       title : item.title,
       part : item.part,
-      hub : item.hub,
       note : item.note,
-      vendor: item.vendor ||'',
       fees
+    }
+
+    if(cartItems.variant){
+      metadata.variant = cartItems.variant; 
     }
 
     const price = round1cts(item.price * 100).toFixed(2);
@@ -480,17 +610,33 @@ function createItemsFromCart(cartItems, fees, isInvoice, dayOfWeek) {
 
 //
 // parse subscription Item
-function parseItem(item: Stripe.SubscriptionItem) {
+function parseItem(item: Stripe.SubscriptionItem): SubscriptionProductItem {
+  const result:SubscriptionProductItem = {
+    unit_amount:item.price.unit_amount,
+    currency:item.price.currency,
+    quantity:(item.quantity),
+    fees:parseFloat(item.metadata.fees),
+    sku:item.metadata.sku,
+    title:item.metadata.title,
+    note:item.metadata.note||'',
+    part:item.metadata.part
+  };
+  //
+  // optional fields
+  ["variant"].filter(key => item[key]).forEach(key=> result[key]=item[key]);
+  return result;
+}
+
+//
+// parse subscription Item
+function parseServiceItem(item: Stripe.SubscriptionItem):SubscriptionServiceItem {
   const result = {
     unit_amount:item.price.unit_amount,
     currency:item.price.currency,
     quantity:(item.quantity),
-    dayOfWeek:parseInt(item.metadata.dayOfWeek),
     fees:parseFloat(item.metadata.fees),
-    sku:item.metadata.sku,
-    title:item.metadata.title
+    id:item.metadata.sku
   };
-  ["note","hub","part","vendor"].filter(key => item[key]).forEach(key=> result[key]=item[key]);
   return result;
 }
 
@@ -499,7 +645,6 @@ function parseItem(item: Stripe.SubscriptionItem) {
 function parseShipping(metadata) {
   try{
     const address = JSON.parse(metadata['address']) as SubscriptionAddress;
-    address.dayOfWeek = parseInt(metadata['dayOfWeek'])
     return address;
   }catch(err){
     console.log('---- DBG error parseAddress',err);

@@ -100,15 +100,10 @@ describe("Class subscription", function(){
     defaultSub.should.property("id");
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
-    defaultSub.should.property("items");
-    defaultSub.items.length.should.equal(4);
+    defaultSub.should.property("content");
+    defaultSub.content.items.length.should.equal(2);
+    defaultSub.content.services.length.should.equal(2);
 
-    // console.log('---- DBG sub',defaultSub);
-    // console.log('---- DBG sub',defaultSub.id);
-    // console.log('---- DBG sub',defaultSub.description);
-    // console.log('---- DBG sub',defaultSub.status);
-    // console.log('---- DBG sub',defaultSub.interval);
-    //console.log('---- DBG sub',defaultSub.items[0]);
   });
 
   // Simple weekly souscription 
@@ -124,14 +119,10 @@ describe("Class subscription", function(){
     defaultSub.should.property("id");
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
-    defaultSub.should.property("items");
-    defaultSub.items.length.should.equal(3);
+    defaultSub.should.property("content");
+    defaultSub.content.items.length.should.equal(1);
+    defaultSub.content.services.length.should.equal(2);
 
-    // console.log('---- DBG sub',defaultSub.id);
-    // console.log('---- DBG sub',defaultSub.description);
-    // console.log('---- DBG sub',defaultSub.status);
-    // console.log('---- DBG sub',defaultSub.interval);
-    //console.log('---- DBG sub',defaultSub.items);
   });
 
   it("SubscriptionContract get default payment method and customer from id", async function() {
@@ -141,8 +132,9 @@ describe("Class subscription", function(){
     defaultSub.should.property("id");
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
-    defaultSub.should.property("items");
-    defaultSub.items.length.should.equal(3);
+    defaultSub.should.property("content");
+    defaultSub.content.items.length.should.equal(1);
+    defaultSub.content.services.length.should.equal(2);
 
     //
     // verify customer 
@@ -181,25 +173,34 @@ describe("Class subscription", function(){
   it("list all SubscriptionContract for one customer", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
     contracts.length.should.equal(2);
+
     contracts.forEach(contract=> {
+      const content = contract.content;
       console.log('\n     ------------------------------- ');
-      console.log('-- ',contract.status,contract.description, defaultCustomer.name);
-      console.log('-- ',contract.interval);
-      console.log('-- ','dayOfWeek '+ contract.shipping.dayOfWeek,contract.shipping.name,contract.shipping.streetAdress,contract.shipping.postalCode);
-      contract.items.forEach(item=> {
+      console.log('-- ',content.status,content.description, defaultCustomer.name);
+      console.log('-- ',content.frequency," ",content.dayOfWeek, content.start);
+      console.log('-- ',contract.shipping.name,contract.shipping.streetAdress,contract.shipping.postalCode);
+      console.log('-- articles ');
+      content.items.forEach(item=> {
         console.log('   ',item.title,item.sku,item.quantity * (item.unit_amount/100), 'chf',item.quantity);
       })
+      console.log('-- services ');
+      content.services.forEach(service=> {
+        console.log('   ',service.id, 'chf',service.fees);
+      })
+
     });
 
   });
 
   it("pause weekly sub for 30 days", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
-    const contract = contracts.find(contract => contract.interval.frequency == 'week');
+    const contract = contracts.find(contract => contract.content.frequency == 'week');
 
-    should.exist(contract);
+    should.exist(contract);    
     await contract.pause(pausedUntil);
-    console.log('\n-- ',contract.status,contract.description,'resumed on',new Date(contract.pausedUntil),'(',(contract.pausedUntil-new Date())/86400000|0,'d)');        
+    const content = contract.content;
+    console.log('\n-- ',content.status,content.description,'resumed on',new Date(contract.pausedUntil),'(',(contract.pausedUntil-new Date())/86400000|0,'d)');        
   });
 
   it("manualy resume paused sub ", async function() {
@@ -240,7 +241,7 @@ describe("Class subscription", function(){
       content.contract.id.should.equal(defaultSub.id);
       content.error.should.equal(false);      
     }catch(err) {
-      console.log('---ERR',err.message)
+      //console.log('---ERR',err.message)
     }
   });
 	
@@ -260,7 +261,7 @@ describe("Class subscription", function(){
       content.transaction.id.should.equal(defaultTx.id);
       content.error.should.equal(true);      
     }catch(err) {
-      console.log('---ERR',err.message)
+      //console.log('---ERR',err.message)
     }
   });
 	
@@ -278,7 +279,7 @@ describe("Class subscription", function(){
       content.contract.id.should.equal(defaultSub.id);
       content.error.should.equal(false);      
     }catch(err) {
-      console.log('---ERR',err.message)
+      //console.log('---ERR',err.message)
     }
   });
 	  
