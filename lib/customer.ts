@@ -432,11 +432,12 @@ export class Customer {
       throw new Error("le coupon ne contient pas de crédit");
     }
 
+    const note = code+':'+coupon.name;
+
     //
     // it's more safe to remove code 
     await $stripe.coupons.del(code);
-
-    await this.updateCredit(amount/100);
+    await this.updateCredit(amount/100,note);
     this.unlock(_method);
     return this;
   }
@@ -753,7 +754,9 @@ export class Customer {
   // 
   // add credit to a customer
   // FIXME: balance is completly unsecure 
-  async updateCredit(amount:number) {
+  // use: POST /v1/customers/:uid/balance_transactions { description, amount, currency }
+  // dashboard https://dashboard.stripe.com/test/logs/req_wFQcKfjb0TGC8p 
+  async updateCredit(amount:number, note?:string) {
     const _method = 'updatecredit';
     this.lock(_method);
     //
@@ -791,10 +794,18 @@ export class Customer {
     //
     // update customer credit 
     const balance = Math.round((amount+this.balance)*100);
-    const customer = await $stripe.customers.update(
+
+    // FIXME replace updateCredit
+    // https://stripe.com/docs/api/customer_balance_transactions/create
+    const balanceTransaction = await $stripe.customers.createBalanceTransaction(
       this._id,
-      {balance}
+      {amount:Math.round(amount*100), currency: 'chf',description:note||''}
     );
+
+    // const customer = await $stripe.customers.update(
+    //   this._id,
+    //   {balance}
+    // );
     this._balance = balance;
 
     //

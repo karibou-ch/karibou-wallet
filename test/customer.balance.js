@@ -89,9 +89,21 @@ describe("customer.balance", function(){
 
   it("Add authorized credit is ok", async function() {
     const cust = await customer.Customer.get(custCleanList[0]);
+    let testing;
     try{
+      cust.balance.should.equal(0);
+      await cust.updateCredit(35);      
+      await cust.updateCredit(5);      
+      testing = await $stripe.customers.retrieve(unxor(cust.id));
+      testing.balance.should.equal(4000);
+
+      cust.balance.should.equal(40);
+      await cust.updateCredit(-40);      
       await cust.updateCredit(40);      
       cust.balance.should.equal(40);
+
+      testing = await $stripe.customers.retrieve(unxor(cust.id));
+      testing.balance.should.equal(4000);
     }catch(err) {
       console.log(err)
       should.not.exist(err);
@@ -122,6 +134,10 @@ describe("customer.balance", function(){
     const cust = await customer.Customer.get(custCleanList[0]);
     await cust.updateCredit(-40);      
     cust.balance.should.eql(0)
+
+    let testing = await $stripe.customers.retrieve(unxor(cust.id));
+    testing.balance.should.equal(0);
+
   });
 
   it("Unauthorize customer credit", async function() {
@@ -129,6 +145,10 @@ describe("customer.balance", function(){
     await cust.allowCredit(false);
     cust.allowedCredit().should.equal(false);
     cust.balance.should.eql(0)
+
+    let testing = await $stripe.customers.retrieve(unxor(cust.id));
+    testing.balance.should.equal(0);
+
   });
 
 });

@@ -73,8 +73,13 @@ describe("transaction.balance.credit.consolidation", function(){
 
     await defaultCustomer.updateCredit(initialBalance);
     
+    //
+    // warning, Customer.get use cache
+    let testing = await $stripe.customers.retrieve(unxor(defaultCustomer.id));
+    testing.balance.should.equal(round1cts(initialBalance*100));
+
     const cust = await customer.Customer.get(defaultCustomer.id);
-    cust.balance.should.equal(initialBalance);
+    cust.balance.should.equal((initialBalance));
     
   });
 
