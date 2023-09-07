@@ -87,6 +87,20 @@ describe("customer.balance", function(){
     }
   });
 
+  it("update 0 amount credit", async function() {
+    const cust = await customer.Customer.get(custCleanList[0]);
+    let testing;
+    try{
+      cust.balance.should.equal(0);
+      await cust.updateCredit(0);      
+      testing = await $stripe.customers.retrieve(unxor(cust.id));
+      testing.balance.should.equal(0);
+    }catch(err) {
+      should.not.exist(err);
+    }
+  });
+
+
   it("Add authorized credit is ok", async function() {
     const cust = await customer.Customer.get(custCleanList[0]);
     let testing;
@@ -109,6 +123,7 @@ describe("customer.balance", function(){
       should.not.exist(err);
     }
   });
+
 
   it("Add max credit throw an exception", async function() {
     const cust = await customer.Customer.get(custCleanList[0]);

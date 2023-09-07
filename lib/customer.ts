@@ -759,59 +759,72 @@ export class Customer {
   async updateCredit(amount:number, note?:string) {
     const _method = 'updatecredit';
     this.lock(_method);
-    //
-    // max negative credit verification
-    if((this.balance + amount)<0) {
-      if(!this.allowedCredit()){
-        this.unlock(_method);
-        throw new Error("Le paiement par crédit n'est pas disponible");
+    try{
+
+      //
+      // 0 amount failed silently
+      if(amount == 0) {
+        return;
       }
 
       //
-      // check validity
-      const fingerprint = crypto_fingerprint(this.id+this.uid+'invoice');
-      const check = await this.checkMethods(false);
-      if(check[fingerprint].error) {
-        this.unlock(_method);
-        throw new Error(check[fingerprint].error);
+      // max negative credit verification
+      if((this.balance + amount)<0) {
+        if(!this.allowedCredit()){
+          this.unlock(_method);
+          throw new Error("Le paiement par crédit n'est pas disponible");
+        }
+
+        //
+        // check validity
+        const fingerprint = crypto_fingerprint(this.id+this.uid+'invoice');
+        const check = await this.checkMethods(false);
+        if(check[fingerprint].error) {
+          this.unlock(_method);
+          throw new Error(check[fingerprint].error);
+        }
+
+        const maxcredit = Config.option('allowMaxCredit')/100;    
+        if((this.balance + amount)<(-maxcredit)) {
+          this.unlock(_method);
+          throw new Error("Vous avez atteind la limite de crédit de votre compte");
+        }
       }
 
-      const maxcredit = Config.option('allowMaxCredit')/100;    
-      if((this.balance + amount)<(-maxcredit)) {
+      //
+      // max amount credit verification
+      const maxamount = Config.option('allowMaxAmount')/100;    
+      if((this.balance + amount)>maxamount) {
         this.unlock(_method);
-        throw new Error("Vous avez atteind la limite de crédit de votre compte");
+        throw new Error("Vous avez atteind la limite de votre portefeuille "+maxamount.toFixed(2)+" chf");
       }
-    }
 
-    //
-    // max amount credit verification
-    const maxamount = Config.option('allowMaxAmount')/100;    
-    if((this.balance + amount)>maxamount) {
+      //
+      // update customer credit 
+      const balance = Math.round((amount+this.balance)*100);
+
+      // FIXME replace updateCredit
+      // https://stripe.com/docs/api/customer_balance_transactions/create
+      const balanceTransaction = await $stripe.customers.createBalanceTransaction(
+        this._id,
+        {amount:Math.round(amount*100), currency: 'chf',description:note||''}
+      );  
+
+      // const customer = await $stripe.customers.update(
+      //   this._id,
+      //   {balance}
+      // );
+      this._balance = balance;
+
+      //
+      // put this new customer in cache 4h
+      cache.set(this.id,this);      
+    }catch(err){
+      throw err;
+    }finally{
       this.unlock(_method);
-      throw new Error("Vous avez atteind la limite de votre portefeuille "+maxamount.toFixed(2)+" chf");
     }
 
-    //
-    // update customer credit 
-    const balance = Math.round((amount+this.balance)*100);
-
-    // FIXME replace updateCredit
-    // https://stripe.com/docs/api/customer_balance_transactions/create
-    const balanceTransaction = await $stripe.customers.createBalanceTransaction(
-      this._id,
-      {amount:Math.round(amount*100), currency: 'chf',description:note||''}
-    );
-
-    // const customer = await $stripe.customers.update(
-    //   this._id,
-    //   {balance}
-    // );
-    this._balance = balance;
-
-    //
-    // put this new customer in cache 4h
-    cache.set(this.id,this);
-    this.unlock(_method);
     return this;
   }
 
