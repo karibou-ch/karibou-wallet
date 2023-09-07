@@ -85,12 +85,33 @@ export class Webhook {
       }
 
       // 
+      // on invoice payment action required
+      // https://stripe.com/docs/billing/subscriptions/webhooks#additional-action
+      // send customer e-mail with confirmation requested
+      if(event.type == 'invoice.payment_action_required') {
+        const invoice = event.data.object as Stripe.Invoice;
+        const paymentIntent = invoice.payment_intent.toString();
+        const transaction = await Transaction.get(xor(paymentIntent));
+        const contract = await SubscriptionContract.get(invoice.subscription);        
+        const customer = await contract.customer();
+        //
+        // set pending payment intent, customer have 23h to change payment method
+
+        return { event: event.type ,contract, customer, transaction,error:false} as WebhookStripe;
+      }
+
+      // 
       // on invoice payment failed
+      // send customer e-mail payment method 
       if(event.type == 'invoice.payment_failed') {
         const invoice = event.data.object as Stripe.Invoice;
-        const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        const paymentIntent = invoice.payment_intent.toString();
+        const transaction = await Transaction.get(xor(paymentIntent));
         const contract = await SubscriptionContract.get(invoice.subscription);
         const customer = await contract.customer();
+        //
+        // set pending payment intent, customer have 23h to confirm payment
+
         return { event: event.type ,contract, customer, transaction,error:false} as WebhookStripe;
       }
 
@@ -133,10 +154,24 @@ export class Webhook {
       // Confirm validity when balance is updated, 
       if (event.type == 'customer.balance_funded') {
         const balance = event.data.object as Stripe.CustomerBalanceTransaction;
-        const customer = await Customer.get(balance.customer);
+        const customer = await Customer.get(xor(balance.customer.toString()));
         return { event: event.type ,customer ,error:false} as WebhookStripe;
       }
-      
+
+
+      //
+      // try to use (POST) customers/cus_id/balance_trasanctions
+      // instead of customer.updated
+      if (event.type == 'customer.updated'){
+        const stripeCustomer = event.data.object as Stripe.Customer;
+        // verify customer format 
+        if(stripeCustomer.metadata.uid){
+          const customer = await Customer.get(xor(stripeCustomer.id));
+          return { event: event.type ,customer ,error:false} as WebhookStripe;
+        }
+
+        return { event: event.type , error:false} as WebhookStripe;
+      }
       //
       // else ...
       console.log(`Unhandled event type ${event.type}`);
