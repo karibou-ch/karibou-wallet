@@ -352,13 +352,13 @@ export  class  Transaction {
 
 
   /**
-  * ## transaction.confirm(id) 3d secure authorization
+  * ## transaction.confirm(paymentIntentId) 3d secure authorization
   * Capture the amount on an authorized transaction
   * @returns {any} Promise which return the charge object or a rejected Promise
   */
-   static async confirm(id:string) {
-    const tid = (id);
-    const transaction = await $stripe.paymentIntents.update(tid);
+   static async confirm(paymentIntent:string) {
+    const tid = (paymentIntent);
+    const transaction = await $stripe.paymentIntents.confirm(tid);
     assert(transaction.customer)
     return new Transaction(transaction);
    }
