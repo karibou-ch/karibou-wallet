@@ -34,7 +34,8 @@ describe("Class subscription", function(){
   let defaultTx;
 
   // start next week
-  let dateValid = new Date(Date.now() + 86400000*7);
+  let dateValidNow = new Date(Date.now() + 3600000);
+  let dateValid7d = new Date(Date.now() + 86400000*7);
   let pausedUntil = new Date(Date.now() + 86400000*30);
  
   const shipping = {
@@ -79,7 +80,9 @@ describe("Class subscription", function(){
     const items = cartItems.slice();
     try{
       const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
-      defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,shipping,items,dayOfWeek,fees)
+
+      const subOptions = { shipping,dayOfWeek,fees };
+      defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValidNow,items,subOptions)
       throw "error";
     }catch(err){
       err.message.should.containEql('incorrect item format')
@@ -95,14 +98,19 @@ describe("Class subscription", function(){
     const items = cartItems.filter(item => item.frequency == "week");
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,shipping,items,dayOfWeek,fees)
+    const subOptions = { shipping,dayOfWeek,fees };
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValidNow,items,subOptions)
 
     defaultSub.should.property("id");
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
+    defaultSub.content.status.should.equal("active");
     defaultSub.content.items.length.should.equal(2);
     defaultSub.content.services.length.should.equal(2);
+    const oneDay = 24 * 60 * 60 * 1000;
+    const nextInvoice = defaultSub.content.nextInvoice;
+    Math.round((nextInvoice - dateValidNow)/oneDay).should.equal(7)
 
   });
 
@@ -114,14 +122,19 @@ describe("Class subscription", function(){
     const items = cartItems.filter(item => item.frequency == "month");
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"month",dateValid,shipping,items,dayOfWeek,fees)
+    const subOptions = { shipping,dayOfWeek,fees };
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"month",dateValid7d,items,subOptions)
 
     defaultSub.should.property("id");
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
+    defaultSub.content.status.should.equal("active");
+    should.not.exist(defaultSub.content.latestPaymentIntent);
     defaultSub.content.items.length.should.equal(1);
     defaultSub.content.services.length.should.equal(2);
+    const nextInvoice = defaultSub.content.nextInvoice;
+    ((dateValidNow.getMonth() + 1)%12).should.equal(nextInvoice.getMonth());
 
   });
 
@@ -136,6 +149,7 @@ describe("Class subscription", function(){
     defaultSub.content.items.length.should.equal(1);
     defaultSub.content.services.length.should.equal(2);
 
+    defaultSub.content.services.every(item => item.id && item.title && item.fees && item.quantity).should.equal(true)
     //
     // verify customer 
     const customer = await defaultSub.customer();
@@ -198,7 +212,9 @@ describe("Class subscription", function(){
     const contract = contracts.find(contract => contract.content.frequency == 'week');
 
     should.exist(contract);    
+    contract.content.status.should.equal('active');
     await contract.pause(pausedUntil);
+    contract.content.status.should.equal('paused');
     const content = contract.content;
     console.log('\n-- ',content.status,content.description,'resumed on',new Date(contract.pausedUntil),'(',(contract.pausedUntil-new Date())/86400000|0,'d)');        
   });
@@ -206,10 +222,11 @@ describe("Class subscription", function(){
   it("manualy resume paused sub ", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
     const contract = contracts.find(contract => contract.interval.frequency == 'week');
+    contract.content.status.should.equal('paused');
 
     should.exist(contract);
     await contract.resumeManualy();
-    contract.status.should.equal('active');
+    contract.content.status.should.equal('active');
     // console.log('\n-- ',contract.status,contract.description,defaultCustomer.name, contract.pausedUntil);        
   });
 
