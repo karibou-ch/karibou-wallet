@@ -379,6 +379,13 @@ export function stripeParseError(err) {
 
 //
 // export instances variables
+export const createTestMethodFromStripe=(stripe)=> {
+	return {
+	type:KngPayment.card,
+	issuer:'visa',
+	alias: xor(stripe.id),
+	id: xor(stripe.id)}
+};
 
 export const card_mastercard_prepaid = {
 	type:KngPayment.card,
