@@ -97,6 +97,12 @@ describe("Class transaction with credit.balance mixed with other payment", funct
     tx.provider.should.equal("stripe");
     tx.customerCredit.should.equal(10);
     defaultTX = tx;
+
+    //
+    // warning, Customer.get use cache
+    let testing = await $stripe.customers.retrieve(unxor(defaultCustomer.id));
+    testing.balance.should.equal(0);
+
   });
 
 
