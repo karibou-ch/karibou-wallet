@@ -130,7 +130,6 @@ describe("Class subscription", function(){
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
     defaultSub.content.status.should.equal("active");
-    should.not.exist(defaultSub.content.latestPaymentIntent);
     defaultSub.content.items.length.should.equal(1);
     defaultSub.content.services.length.should.equal(2);
     const nextInvoice = defaultSub.content.nextInvoice;

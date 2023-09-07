@@ -100,7 +100,7 @@ describe("Class subscription.payment", function(){
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
-    console.log('---',defaultSub._subscription)
+    console.log('--- should be requires_action',defaultSub.content.latestPaymentIntent.status)
     // should be requires_action
     //defaultSub.content.latestPaymentIntent.status.should.equal("requires_confirmation")
   });
@@ -125,6 +125,9 @@ describe("Class subscription.payment", function(){
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+
+    console.log('--- should be requires_confirmation',defaultSub.content.latestPaymentIntent.status)
+
     // console.log('---- 0',defaultSub.content.latestPaymentIntent)
     // should be requires_payment_method
     //defaultSub.content.latestPaymentIntent.status.should.equal("requires_confirmation")
