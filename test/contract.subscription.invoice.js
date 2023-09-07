@@ -77,7 +77,8 @@ describe("contract.subscription.invoice", function(){
     const items = cartItems.filter(item => item.frequency == "week");
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,shipping,items,dayOfWeek,fees)
+    const subOptions = { shipping,dayOfWeek,fees };
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
 
     defaultSub.should.property("id");
     defaultSub.should.property("status");
