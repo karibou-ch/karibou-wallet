@@ -10,6 +10,12 @@ The purpose of this project is to provide a simple and intuitive API to handle a
 * [x] Two step payment and (partial) refund (authorization, capture, refund)
 * [ ] Multiple accounts transfer funds (**DOING**)
 * [x] Subscription (weekly, monthly)
+  * [x] with payment method `visa/mc/invoice/cash`
+  * [X] with products or services
+  * [X] pause and resume
+  * [X] build and sent invoices
+  * [X] manage SCA and other F**ING security scheme
+  * [ ] update contract items (add/update or remove specifics items)
 * [x] Initial Customer management to protect sensitives data
   * [x] sensitives data are decoupled from karibou
   * [ ] email, phone 
