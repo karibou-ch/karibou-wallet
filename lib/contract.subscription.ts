@@ -15,6 +15,7 @@ export interface SubscriptionProductItem{
   sku:number|string,
   title:string,
   note: string,
+  hub: string,
   part: string,
   variant?:string
 }
@@ -94,13 +95,15 @@ interface SubscriptionMetaItem {
   title : string;
   part? : string;
   variant? : string;
+  hub? : string;
   note? : string;
   fees : string|number;
 }
 
+// Unit amount is a positive integer in cents 
 interface SubscriptionItem {
   currency:string;
-  unit_amount:number;
+  unit_amount:number; 
   product:string;
   recurring:{
     interval:Interval;
@@ -641,6 +644,7 @@ async function findOrCreateItemService(item, interval, isInvoice) {
 
   //
   // missing fees (see documentation for fees inclusion)
+  // warning unit_amount is positive integer in cents 
   const serviceItem:SubscriptionItem = { 
     currency : 'CHF', 
     unit_amount : isInvoice? 0:(price*100),
@@ -670,6 +674,7 @@ function createItemsFromCart(cartItems, fees, isInvoice) {
       quantity: item.quantity,
       title : item.title,
       part : item.part,
+      hub : item.hub,
       note : item.note,
       fees
     }
@@ -682,6 +687,7 @@ function createItemsFromCart(cartItems, fees, isInvoice) {
 
     //
     // missing fees (see documentation for fees inclusion)
+    // warning unit_amount is positive integer in cents 
     const instance:SubscriptionItem = { 
       currency : 'CHF', 
       unit_amount : (isInvoice ? 0:parseInt(price)),
@@ -713,6 +719,7 @@ function parseItem(item: Stripe.SubscriptionItem): SubscriptionProductItem {
     fees:parseFloat(item.metadata.fees),
     sku:item.metadata.sku,
     title:item.metadata.title,
+    hub:item.metadata.hub,
     note:item.metadata.note||'',
     part:item.metadata.part
   };
