@@ -5,6 +5,7 @@
 The purpose of this project is to provide a simple and intuitive API to handle a simple Wallet manager for our karibou.ch marketplace. It has bean designed to work on server side and it's usefull for,
 * [x] Stripe payment (card, SEPA, ...)
 * [x] Initial debit balance account
+  * [X] payment can be made with customer balance and completed with card 
 * [x] Initial credit balance account (for invoice)
 * [x] Two step payment and (partial) refund (authorization, capture, refund)
 * [ ] Multiple accounts transfer funds (**DOING**)
@@ -20,6 +21,10 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [ ] verify from inbox email (OTP)
   * [ ] verify from sms (OTP)
   * [ ] verify from public key (web3/btc)
+* [x] Initial transfer monney via COUPON 
+  * [X] coupon can be load in customer wallet
+  * [ ] coupon is limited to a vendor
+
 
 ## Prerequisites
 install node.js with [NVM](https://github.com/nvm-sh/nvm#installing-and-updating) (required). 
