@@ -106,6 +106,8 @@ describe("Class subscription", function(){
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
     defaultSub.content.status.should.equal("active");
+    defaultSub.content.items[0].hub.should.equal('mocha');
+    defaultSub.content.items[1].hub.should.equal('mocha');
     defaultSub.content.items.length.should.equal(2);
     defaultSub.content.services.length.should.equal(2);
     const oneDay = 24 * 60 * 60 * 1000;
@@ -131,6 +133,7 @@ describe("Class subscription", function(){
     defaultSub.should.property("content");
     defaultSub.content.status.should.equal("active");
     defaultSub.content.items.length.should.equal(1);
+    defaultSub.content.items[0].hub.should.equal('mocha');
     defaultSub.content.services.length.should.equal(2);
     const nextInvoice = defaultSub.content.nextInvoice;
     ((dateValidNow.getMonth() + 1)%12).should.equal(nextInvoice.getMonth());
