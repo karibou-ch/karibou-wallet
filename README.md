@@ -1,5 +1,23 @@
 ![build](https://github.com/karibou-ch/karibou-wallet/actions/workflows/node.js.yml/badge.svg)
 
+# Soutenez le développement des logiciels de Karibou.ch 🔥
+
+[![k-dev-md](https://github.com/karibou-ch/karibou-wallet/assets/1422935/1bc0ad0b-0797-4a1a-a308-1e732bdcaa4c)](https://karibou.ch)
+
+
+Nous sommes sincèrement reconnaissants envers nos soutiens qui rendent ce projet possible. 
+Votre générosité nous permet de continuer à développer et à améliorer nos logiciels tout en les maintenants en libre accès.
+
+En tant que soutien, vous bénéficierez de nombreux avantages, notamment :
+
+- Accès exclusif aux cycles de financement futurs avec la possibilité de participer.
+- Accès privilégié aux produits à venir de Karibou.ch sur Ethereum.
+- Reconnaissance bien méritée dans nos crédits et sur notre page Karibou.ch.
+
+Rejoignez sans plus tarder notre communauté de soutiens sur Karibou.ch et participez à l'évolution de ce projet !
+
+[Devenir un Soutien Karibou.ch](lien_vers_votre_page_karibou)
+
 ## Main usage
 
 The purpose of this project is to provide a simple and intuitive API to handle a simple Wallet manager for our karibou.ch marketplace. It has bean designed to work on server side and it's usefull for,
@@ -60,6 +78,7 @@ Do not run tests with your live processor. Make sure you are running in a
 sandbox.
 
 
+[![logo k-dev](https://github.com/karibou-ch/karibou-wallet/assets/1422935/9bd35736-0388-4629-816c-ef63f0773c58)](https://karibou.ch)
 
 ## License
 The API is available under AGPL V3 to protect the long term interests of the community – you are free to use it with no restrictions but if you change the server code, then those code changes must be contributed back.
