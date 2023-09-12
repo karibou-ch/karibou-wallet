@@ -18,6 +18,9 @@ Rejoignez sans plus tarder notre communauté de soutiens sur Karibou.ch et parti
 
 [Devenir un Soutien Karibou.ch](lien_vers_votre_page_karibou)
 
+
+
+# Karibou Wallet
 ## Main usage
 
 The purpose of this project is to provide a simple and intuitive API to handle a simple Wallet manager for our karibou.ch marketplace. It has bean designed to work on server side and it's usefull for,
