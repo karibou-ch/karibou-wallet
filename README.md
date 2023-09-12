@@ -1,6 +1,6 @@
 ![build](https://github.com/karibou-ch/karibou-wallet/actions/workflows/node.js.yml/badge.svg)
 
-# Soutenez le développement des logiciels de Karibou.ch 🔥
+# Soutenez le développement des logiciels de Karibou.ch 🤗
 
 [![k-dev-md](https://github.com/karibou-ch/karibou-wallet/assets/1422935/1bc0ad0b-0797-4a1a-a308-1e732bdcaa4c)](https://karibou.ch)
 
