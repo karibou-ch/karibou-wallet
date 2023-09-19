@@ -13,6 +13,7 @@ export interface WebhookStripe {
   customer?:Customer;
   subscription?: SubscriptionContract;
   transaction?: Transaction;
+  testing: boolean;
 }
 
 export interface WebhookTwilio {
@@ -53,6 +54,7 @@ export class Webhook {
     // ** lors de la pause/unpause
     // customer.subscription.paused
     // customer.subscription.resumed
+    // customer.subscription.deleted
     //
     // ** normalement c'est uniquement à la création
     // invoice.payment_action_required
@@ -80,24 +82,40 @@ export class Webhook {
         //
         // verify if payment method muste be updated
         const contract = await SubscriptionContract.get(invoice.subscription);
+        const testing = (contract.environnement == 'test')
+        if(testing) {
+          return { event: event.type,testing, error:false};
+        }
         const customer = await contract.customer();        
-        return { event: event.type,contract,customer,error:false} as WebhookStripe;
+        return { event: event.type,testing, contract,customer,error:false} as WebhookStripe;
       }
 
+      //
+      // clear cache on subscription ending
+      if(event.type == 'customer.subscription.deleted'){        
+        const invoice = event.data.object as Stripe.Invoice;
+        SubscriptionContract.clearCache(invoice.subscription);
+      }
       // 
       // on invoice payment action required
       // https://stripe.com/docs/billing/subscriptions/webhooks#additional-action
       // send customer e-mail with confirmation requested
       if(event.type == 'invoice.payment_action_required') {
         const invoice = event.data.object as Stripe.Invoice;
+        const contract = await SubscriptionContract.get(invoice.subscription);        
+        const testing = (contract.environnement == 'test')
+        if(testing) {
+          return { event: event.type,testing, error:false};
+        }
+
+
         const paymentIntent = invoice.payment_intent.toString();
         const transaction = await Transaction.get(xor(paymentIntent));
-        const contract = await SubscriptionContract.get(invoice.subscription);        
         const customer = await contract.customer();
         //
         // set pending payment intent, customer have 23h to change payment method
 
-        return { event: event.type ,contract, customer, transaction,error:false} as WebhookStripe;
+        return { event: event.type ,testing,contract, customer, transaction,error:false} as WebhookStripe;
       }
 
       // 
@@ -105,14 +123,20 @@ export class Webhook {
       // send customer e-mail payment method 
       if(event.type == 'invoice.payment_failed') {
         const invoice = event.data.object as Stripe.Invoice;
+        const contract = await SubscriptionContract.get(invoice.subscription);        
+        const testing = (contract.environnement == 'test')
+        if(testing) {
+          return { event: event.type,testing, error:false};
+        }
+
+
         const paymentIntent = invoice.payment_intent.toString();
         const transaction = await Transaction.get(xor(paymentIntent));
-        const contract = await SubscriptionContract.get(invoice.subscription);
         const customer = await contract.customer();
         //
         // set pending payment intent, customer have 23h to confirm payment
 
-        return { event: event.type ,contract, customer, transaction,error:false} as WebhookStripe;
+        return { event: event.type ,testing,contract, customer, transaction,error:false} as WebhookStripe;
       }
 
 
@@ -130,13 +154,19 @@ export class Webhook {
 
 
         const contract = await SubscriptionContract.get(invoice.subscription);
+        const testing = (contract.environnement == 'test')
+        if(testing) {
+          return { event: event.type,testing, error:false};
+        }
+
+
         const customer = await contract.customer();
 
         //
         // finalement update le status as PREPAID pour l'afficher dans l'application
         await transaction.updateStatusPrepaid();
 
-        return { event: event.type ,contract, customer, transaction ,error:false} as WebhookStripe;
+        return { event: event.type , testing,contract, customer, transaction ,error:false} as WebhookStripe;
       }
 
       // 
@@ -145,17 +175,25 @@ export class Webhook {
         const invoice = event.data.object as Stripe.Invoice;
 
         const contract = await SubscriptionContract.get(invoice.subscription);
+        const testing = (contract.environnement == 'test')
+        if(testing) {
+          return { event: event.type,testing, error:false};
+        }
+
         const customer = await contract.customer();
 
-        return { event: event.type ,contract, customer ,error:false} as WebhookStripe;
+        return { event: event.type ,testing,contract, customer ,error:false} as WebhookStripe;
       }
 
       //
       // Confirm validity when balance is updated, 
       if (event.type == 'customer.balance_funded') {
         const balance = event.data.object as Stripe.CustomerBalanceTransaction;
-        const customer = await Customer.get(xor(balance.customer.toString()));
-        return { event: event.type ,customer ,error:false} as WebhookStripe;
+        let customer;
+        try{
+          customer = await Customer.get(xor(balance.customer.toString()));
+        }catch(err) {}
+        return { event: event.type,testing:false, customer ,error:false} as WebhookStripe;  
       }
 
 
@@ -164,13 +202,16 @@ export class Webhook {
       // instead of customer.updated
       if (event.type == 'customer.updated'){
         const stripeCustomer = event.data.object as Stripe.Customer;
-        // verify customer format 
-        if(stripeCustomer.metadata.uid){
-          const customer = await Customer.get(xor(stripeCustomer.id));
-          return { event: event.type ,customer ,error:false} as WebhookStripe;
-        }
+        let customer, transactions;
+        try{
+          //
+          // update the cache if customer is modified from Stripe
+          Customer.clearCache(stripeCustomer.id);
+          customer = await Customer.get(xor(stripeCustomer.id));          
+          transactions = await customer.listBalanceTransactions(2);
+        }catch(err) {}
 
-        return { event: event.type , error:false} as WebhookStripe;
+        return { event: event.type ,testing: false, customer, error:false} as WebhookStripe;
       }
       //
       // else ...
