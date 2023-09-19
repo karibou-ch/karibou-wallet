@@ -84,8 +84,25 @@ describe("contract.subscription.invoice", function(){
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
+    defaultSub.content.status.should.equal("active");
+    defaultSub.content.items[0].hub.should.equal('mocha');
+    defaultSub.content.items[1].hub.should.equal('mocha');
     defaultSub.content.items.length.should.equal(2);
-    defaultSub.content.services.length.should.equal(2);
+    defaultSub.content.items.forEach(item => {
+      const elem = items.find(itm => itm.sku == item.sku);
+      elem.price.should.equal(item.fees);
+      item.unit_amount.should.equal(0);
+    });
+
+    defaultSub.content.fees.should.equal(0.06)
+
+    const s_shipping = defaultSub.content.services.find(item => item.title=='shipping');
+    s_shipping.fees.should.equal(5);
+    const s_karibou = defaultSub.content.services.find(item => item.title=='karibou.ch');
+    const oneDay = 24 * 60 * 60 * 1000;
+    const nextInvoice = defaultSub.content.nextInvoice;
+    Math.round((nextInvoice - dateValid)/oneDay).should.equal(7)
+
   });
 
   it("SubscriptionContract get default payment method and customer from id", async function() {
@@ -141,7 +158,7 @@ describe("contract.subscription.invoice", function(){
       })
       console.log('-- services ');
       content.services.forEach(service=> {
-        console.log('   ',service.id, 'chf',service.fees);
+        console.log('   ',service.id,service.title, 'chf',service.fees);
       })
 
     });

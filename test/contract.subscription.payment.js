@@ -13,12 +13,12 @@
  const payments = require("../dist/payments").KngPayment;
  const unxor = require("../dist/payments").unxor;
  const card_mastercard_prepaid = require("../dist/payments").card_mastercard_prepaid;
+ const createTestMethodFromStripe = require("../dist/payments").createTestMethodFromStripe;
  const subscription = require("../dist/contract.subscription");
  const $stripe = require("../dist/payments").$stripe;
  const should = require('should');
  const cartItems = require('./fixtures/cart.items');
 const { Webhook,WebhookContent } = require("../dist/webhook");
-const { card_authenticationRequired, createTestMethodFromStripe } = require("../dist/payments");
 
 
  //
@@ -33,6 +33,7 @@ describe("Class subscription.payment", function(){
   let defaultSub;
   let methodFailed;
   let method3ds;
+  let methodValid;
 
   // start next week
   let dateValid = new Date(Date.now() + 86400000*7);
@@ -65,7 +66,7 @@ describe("Class subscription.payment", function(){
     defaultCustomer = await customer.Customer.create("subscription@email.com","Foo","Bar","022345",1234);
     methodFailed = await $stripe.paymentMethods.create({
       type: 'card',card: {
-        number: '4000008260003178',exp_month: 12,exp_year: 2034,cvc: '314'}
+        number: '4000000000000341',exp_month: 12,exp_year: 2034,cvc: '314'}
       });
 
     await $stripe.paymentMethods.attach(methodFailed.id,{customer:unxor(defaultCustomer.id)});
@@ -76,6 +77,14 @@ describe("Class subscription.payment", function(){
       });
 
     await $stripe.paymentMethods.attach(method3ds.id,{customer:unxor(defaultCustomer.id)});
+
+    methodValid = await $stripe.paymentMethods.create({
+      type: 'card',card: {
+        number: '4242424242424242',exp_month: 12,exp_year: 2034,cvc: '314'}
+      });
+
+    await $stripe.paymentMethods.attach(methodValid.id,{customer:unxor(defaultCustomer.id)});
+
   });
 
   after(async function () {
@@ -100,38 +109,81 @@ describe("Class subscription.payment", function(){
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
-    console.log('--- should be requires_action',defaultSub.content.latestPaymentIntent.status)
-    // should be requires_action
-    //defaultSub.content.latestPaymentIntent.status.should.equal("requires_confirmation")
+    //
+    // should be requires_action instead of requires_confirmation for unconfirmed capture
+    defaultSub.content.latestPaymentIntent.status.should.equal("requires_action")
   });
 
-
-  xit("SubscriptionContract confirm payment intent", async function() {
-    defaultSub = await subscription.SubscriptionContract.get(defaultSub.id);
-    // const tx = await transaction.Transaction.get(defaultSub.content.latestPaymentIntent.id);
-    const result = await transaction.Transaction.confirm(defaultSub.content.latestPaymentIntent.client_secret);
-    console.log('---',result)
-
-  })
-
-  xit("SubscriptionContract created with ans invalid payment method", async function() {
+  it("SubscriptionContract created with invalid payment method", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
     const items = cartItems.filter(item => item.frequency == "week");
 
-    const card = createTestMethodFromStripe(methodFailed);
+    let card = createTestMethodFromStripe(methodFailed);
     const subOptions = { shipping,dayOfWeek,fees };
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
-    console.log('--- should be requires_confirmation',defaultSub.content.latestPaymentIntent.status)
+    //
+    // should be requires_action instead of requires_confirmation for unconfirmed capture
+    defaultSub.content.latestPaymentIntent.status.should.equal("requires_payment_method")
 
-    // console.log('---- 0',defaultSub.content.latestPaymentIntent)
-    // should be requires_payment_method
-    //defaultSub.content.latestPaymentIntent.status.should.equal("requires_confirmation")
+    card = createTestMethodFromStripe(methodValid);
+    defaultSub = await defaultSub.updatePaymentMethod(card);
+    defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
+
   });
 
+  it("SubscriptionContract created with invalid payment method + require 3ds confirmation", async function() {
+
+    const fees = 0.06;
+    const dayOfWeek= 2; // tuesday
+    const items = cartItems.filter(item => item.frequency == "week");
+
+    let card = createTestMethodFromStripe(methodFailed);
+    const subOptions = { shipping,dayOfWeek,fees };
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
+    should.exist(defaultSub.content.latestPaymentIntent);
+    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+
+    //
+    // should be requires_action instead of requires_confirmation for unconfirmed capture
+    defaultSub.content.latestPaymentIntent.status.should.equal("requires_payment_method")
+
+    card = createTestMethodFromStripe(method3ds);
+    defaultSub = await defaultSub.updatePaymentMethod(card);
+    defaultSub.content.latestPaymentIntent.status.should.equal("requires_action")
+
+  });
+
+  it("SubscriptionContract start on futur with valid payment method is incomplete", async function() {
+
+    const fees = 0.06;
+    const dayOfWeek= 2; // tuesday
+    const items = cartItems.filter(item => item.frequency == "week");
+
+    let card = createTestMethodFromStripe(methodValid);
+    const subOptions = { shipping,dayOfWeek,fees };
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
+    should.exist(defaultSub.content.latestPaymentIntent);
+    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+    defaultSub.content.status.should.equal('incomplete')
+    defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
+  });
+
+  it("SubscriptionContract start now with valid payment method is active", async function() {
+
+    const fees = 0.06;
+    const dayOfWeek= 2; // tuesday
+    const items = cartItems.filter(item => item.frequency == "week");
+
+    let card = createTestMethodFromStripe(methodValid);
+    const subOptions = { shipping,dayOfWeek,fees };
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
+    defaultSub.content.status.should.equal('active');
+    (defaultSub.content.latestPaymentIntent==null).should.equal(true);
+  });
 
 });

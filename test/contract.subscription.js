@@ -34,7 +34,7 @@ describe("Class subscription", function(){
   let defaultTx;
 
   // start next week
-  let dateValidNow = new Date(Date.now() + 3600000);
+  let dateValidNow = new Date(Date.now() + 60000);
   let dateValid7d = new Date(Date.now() + 86400000*7);
   let pausedUntil = new Date(Date.now() + 86400000*30);
  
@@ -99,6 +99,10 @@ describe("Class subscription", function(){
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
     const subOptions = { shipping,dayOfWeek,fees };
+
+    // IMPORTANT
+    // a contract with a valid date for X days has a success payment, 
+    // but  incomplete status until the first day 
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValidNow,items,subOptions)
 
     defaultSub.should.property("id");
@@ -110,6 +114,13 @@ describe("Class subscription", function(){
     defaultSub.content.items[1].hub.should.equal('mocha');
     defaultSub.content.items.length.should.equal(2);
     defaultSub.content.services.length.should.equal(2);
+
+    defaultSub.content.items.forEach(item => {
+      const elem = items.find(itm => itm.sku == item.sku);
+      elem.price.should.equal(item.fees);
+      item.unit_amount.should.equal(item.fees*100);
+    })
+
     const oneDay = 24 * 60 * 60 * 1000;
     const nextInvoice = defaultSub.content.nextInvoice;
     Math.round((nextInvoice - dateValidNow)/oneDay).should.equal(7)
@@ -125,7 +136,7 @@ describe("Class subscription", function(){
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
     const subOptions = { shipping,dayOfWeek,fees };
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"month",dateValid7d,items,subOptions)
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"month",dateValidNow,items,subOptions)
 
     defaultSub.should.property("id");
     defaultSub.should.property("status");

@@ -33,7 +33,7 @@ module.exports = [
     quantity: 2,
     part: "0.00075L",
     note: "-bouchon",
-    price: 7,
+    price: 7.25,
     finalprice: 14.5,
   },
   {
