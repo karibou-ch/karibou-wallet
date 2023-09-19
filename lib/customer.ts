@@ -16,6 +16,7 @@ export class Customer {
   private _metadata:any;
   private _cashbalance:any;
   private _balance: number;
+  private _balance_is_recently_updated: boolean|undefined;
 
   //
   // phone or email share the same role of identity
@@ -87,6 +88,12 @@ export class Customer {
   // balance can be coupled with Card or Cashbalance
   get balance() {
     return this._balance/100;
+  }
+
+  //
+  // updated is true, false or undefined
+  get balanceRecentlyModified() {
+    return this._balance_is_recently_updated;
   }
   
   get phone() {
@@ -233,6 +240,12 @@ export class Customer {
     return cache.get(customer) as Customer;
    }
 
+
+   static clearCache(id) {
+    // use the stripe id
+    id = id.indexOf('cus_')>-1? id: unxor(id);
+    cache.delete(id);
+  }
 
   /**
   * ## customer.get()
@@ -593,6 +606,30 @@ export class Customer {
     return cashbalance;
   }
 
+  async listBalanceTransactions(limit?:number) {
+    limit = limit || 3;
+    const ONE_HOUR = 3600000; /* ms */
+    const balanceTransactions = await $stripe.customers.listBalanceTransactions(
+      unxor(this.id),
+      {limit}
+    );
+    // 
+    // https://stripe.com/docs/api/customer_balance_transactions/create
+    const txs = balanceTransactions.data.map(tx => {
+      return {
+        amount:tx.amount,
+        description:tx.description,
+        ending_balance: tx.ending_balance,
+        created:new Date(tx.created*1000)
+      }
+    });
+    this._balance_is_recently_updated = txs.some(tx =>  (Date.now() - ONE_HOUR)>tx.created.getTime())
+
+    //
+    // put this new customer in cache 4h
+    cache.set(this.id,this);
+    return txs;
+  }
   async listBankTransfer(){
     //
     // the installed versions of stripe and @type/stripe doesn't support the 
