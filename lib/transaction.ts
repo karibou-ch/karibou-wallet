@@ -277,6 +277,8 @@ export  class  Transaction {
         throw new Error("Votre portefeuille ne dispose pas de fonds suffisants pour effectuer cet achat");
       }
 
+      //
+      // NOTE: stripe tx must be done before the customer.balance update
       const transaction = await $stripe.paymentIntents.create(params);
   
       //
