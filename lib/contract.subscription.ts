@@ -320,13 +320,14 @@ export class SubscriptionContract {
   // that is, for the duration of time the customer has already paid for
   // https://stripe.com/docs/billing/subscriptions/cancel?dashboard-or-api=api#cancel-at-end-of-cycle
   async cancel(){
-    // await $stripe.subscriptions.del(this._subscription.id)
+    // https://stripe.com/docs/billing/subscriptions/cancel?dashboard-or-api=api
+    // cancel_at_period_end: true
     this._subscription = await $stripe.subscriptions.update(
-      this._subscription.id,{cancel_at_period_end: true, expand:['latest_invoice.payment_intent']}
+      this._subscription.id,{ expand:['latest_invoice.payment_intent']}
     );
 
     cache.set(this._subscription.id,this);
-
+    return this;
   }
 
   //
@@ -415,6 +416,11 @@ export class SubscriptionContract {
     cache.set(this._subscription.id,this);
     return this;
   }
+
+  static fromWebhook(stripe) {
+    return new SubscriptionContract(stripe); 
+  }
+
 
   static async createOnlyFromService(customer:Customer, card:KngPaymentSource, interval:Interval,  product) {
     const isInvoice = card.issuer == "invoice";
