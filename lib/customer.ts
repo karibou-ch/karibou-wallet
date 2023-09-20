@@ -285,6 +285,24 @@ export class Customer {
     } 
   }
 
+  static async fromWebhook(stripe) {
+    try{
+      const customer = new Customer(
+        stripe.id,
+        stripe.email,
+        stripe.phone,
+        stripe.cash_balance,
+        stripe.balance,
+        stripe.metadata
+      ); 
+      await customer.listMethods();
+  
+    }catch(err){
+      throw parseError(err);
+    }
+
+  }
+
   async addressAdd(address: KngPaymentAddress) {
     assert(this._metadata.uid);
     assert(this._metadata.fname);
