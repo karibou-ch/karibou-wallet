@@ -93,9 +93,9 @@ export class Webhook {
       //
       // clear cache on subscription ending
       if(event.type == 'customer.subscription.deleted'){        
-        const invoice = event.data.object as Stripe.Invoice;
-        const subscription = await SubscriptionContract.get(invoice.subscription)
-        SubscriptionContract.clearCache(invoice.subscription);
+        const stripe = event.data.object as Stripe.Subscription;
+        const subscription = await SubscriptionContract.get(stripe.id)
+        SubscriptionContract.clearCache(stripe.id);
         return { event: event.type, subscription } as WebhookStripe;
       }
       // 
