@@ -143,49 +143,46 @@ export class Webhook {
 
 
       // 
-      // on invoice payment success with VISA/MC
+      // 1/ invoice payment success with VISA/MC 
+      // 2/ invoice payment success with customer credit
       // only for subscription
-      if(event.type == 'invoice.payment_succeeded' && event.data.object.payment_intent) {
+      if(event.type == 'invoice.payment_succeeded') {
         const invoice = event.data.object as Stripe.Invoice;
-        const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+
         //
         // be sure that invoice concerne a subscription
         if(!invoice.subscription) {
-          return { event: event.type, transaction ,error:false} as WebhookStripe;  
+          return { event: event.type ,error:false} as WebhookStripe;  
         }
 
-
         const contract = await SubscriptionContract.get(invoice.subscription);
+        //
+        // be sure of env
         const testing = (contract.environnement == 'test')
         if(testing) {
           return { event: event.type,testing, error:false};
         }
 
+        let transaction;
+        // //
+        // // case of invoice
+        // if(contract.paymentCredit) {
+        // } 
+        //
+        // case of stripe
+        if(contract.latestPaymentIntent){
+          transaction = await Transaction.get(xor(contract.latestPaymentIntent.id));
+          //
+          // use  PREPAID for active order on workflow
+          await transaction.updateStatusPrepaid();
+        }
 
         const customer = await contract.customer();
-
-        //
-        // finalement update le status as PREPAID pour l'afficher dans l'application
-        await transaction.updateStatusPrepaid();
 
         return { event: event.type , testing,contract, customer, transaction ,error:false} as WebhookStripe;
       }
 
-      // 
-      // on invoice payment success with customer credit
-      if(event.type == 'invoice.payment_succeeded' && !event.data.object.payment_intent) {
-        const invoice = event.data.object as Stripe.Invoice;
 
-        const contract = await SubscriptionContract.get(invoice.subscription);
-        const testing = (contract.environnement == 'test')
-        if(testing) {
-          return { event: event.type,testing, error:false};
-        }
-
-        const customer = await contract.customer();
-
-        return { event: event.type ,testing,contract, customer ,error:false} as WebhookStripe;
-      }
 
       //
       // Confirm validity when balance is updated, 
