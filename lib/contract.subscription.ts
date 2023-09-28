@@ -134,6 +134,11 @@ export class SubscriptionContract {
     this._interval = this._subscription.items.data[0].plan.interval;
     this._interval_count = this._subscription.items.data[0].plan.interval_count;
 
+    const contracts = cache.get(xor(subs.customer.toString())) || [];
+    if(!contracts.some(contract => contract.id == this.id)){
+      contracts.push(this);
+    }
+
     cache.set(this._subscription.id,this);
   }
 
@@ -795,15 +800,24 @@ export class SubscriptionContract {
   // load all subscript for this customer
   // - format content for customer presentation 
   static async list(customer:Customer) {
+    const incache = cache.get(customer.id);
+    if(incache) {
+      return incache;
+    }
+
+
 
     // constraint subscription by date {created: {gt: Date.now()}}
     const subscriptions:Stripe.ApiList<Stripe.Subscription> = await $stripe.subscriptions.list({
       customer:unxor(customer.id) , expand:['data.latest_invoice.payment_intent']
     });
 
+    const contracts = subscriptions.data.map(sub => new SubscriptionContract(sub));
+    cache.set(customer.id,contracts);
+
     //
     // wrap stripe subscript to karibou 
-    return subscriptions.data.map(sub => new SubscriptionContract(sub))
+    return contracts;
   }
 
   //
