@@ -236,7 +236,7 @@ export  class  Transaction {
       //
       // use customer credit instead of KngCard
       if(availableCustomerCredit == amount){
-        await customer.updateCredit(-availableCustomerCredit);
+        await customer.updateCredit(-availableCustomerCredit,'authorize:'+options.oid);
         //
         // as credit transaction
         const transaction = createOrderPayment(customer.id,availableCustomerCredit*100,0,"authorized",options.oid);
@@ -247,7 +247,7 @@ export  class  Transaction {
       // use customer negative credit instead of KngCard
       // updateCredit manage the max negative credit
       else if (card.issuer == 'invoice') {        
-        await customer.updateCredit(-amount);
+        await customer.updateCredit(-amount,'authorize:'+options.oid);
         // as invoice transaction
         const transaction = createOrderPayment(customer.id,amount*100,0,"authorized",options.oid);
         transaction.amount_received = 0;
@@ -285,7 +285,7 @@ export  class  Transaction {
       // update credit balance when coupled with card
       // should store in stripe tx the amount used from customer balance
       if(availableCustomerCredit>0) {
-        await customer.updateCredit(-availableCustomerCredit);
+        await customer.updateCredit(-availableCustomerCredit,'authorize:'+options.oid);
         transaction.metadata.customer_credit = availableCustomerCredit*100+'';
         await $stripe.paymentIntents.update( transaction.id , { 
           metadata:transaction.metadata
@@ -481,7 +481,7 @@ export  class  Transaction {
         }
 
 
-        await customer.updateCredit(creditAmount);
+        await customer.updateCredit(creditAmount,'capture:'+this.oid);
 
         //
         // depending the balance position on credit or debit, invoice will be sent
@@ -580,7 +580,7 @@ export  class  Transaction {
       const customer_credit = parseInt(this._payment.metadata.customer_credit||"0") / 100;
       if(customer_credit>0){
         const customer = await Customer.get(this.customer);
-        await customer.updateCredit(customer_credit);                
+        await customer.updateCredit(customer_credit,'cancel:'+this.oid);                
         this._payment = createOrderPayment(this.customer,this.amount*100,this.refunded*100,"canceled",this.oid);
       }
       if(this.provider == "stripe"){
@@ -643,7 +643,7 @@ export  class  Transaction {
       if(this.provider=='invoice'){
         const creditAmount = amount||this.amount;
 
-        await customer.updateCredit(creditAmount);  
+        await customer.updateCredit(creditAmount,'refund:'+this.oid);  
         this._payment = createOrderPayment(this.customer,(this.amount-creditAmount)*100,(this.refunded+creditAmount)*100,"refunded",this.oid);
         return this;
       }
@@ -670,7 +670,7 @@ export  class  Transaction {
         //
         // refund customer credit amount 
         if(creditAmount>0) {
-          await customer.updateCredit(creditAmount);  
+          await customer.updateCredit(creditAmount,'refund:'+this.oid);  
           credit_refunded = createOrderPayment(this.customer,0,(creditAmount)*100,"refunded",this.oid);
         }
         //
@@ -696,7 +696,7 @@ export  class  Transaction {
         const stripeAmount = amount_stripe_received;
         const creditAmount = (amount_stripe_received)? customer_credit : round1cts(customer_credit - (this.refunded - this._payment.amount_received/100));
         if(creditAmount>0) {
-          await customer.updateCredit(creditAmount);  
+          await customer.updateCredit(creditAmount,'refund:'+this.oid);  
           credit_refunded = createOrderPayment(this.customer,0,(creditAmount)*100,"refunded",this.oid);  
         }
         if(stripeAmount>0){
