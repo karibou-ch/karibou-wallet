@@ -185,24 +185,28 @@ export const dateFromExpiry = function (expiryStr) {
 }
 
 //
+// simple tools for UintArray extraction
+export const isHex = function(text) {
+	return /^[0-9A-Fa-f]+$/g.test(text);
+}
+  
+export const toUint8Array = function(text) {
+  text = text+'';
+  if (isHex(text)) {
+    return Uint8Array.from(text.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));    
+  } else {
+    //return Uint8Array.from([...text].map(char => char.charCodeAt(0)));
+    return new Uint8Array(Buffer.from(text, 'utf8'));
+  }
+}
+
+//
 // simple XOR encryption
 export const xor = function(text:string, pkey?:string) :string {
   pkey = pkey || Config.option('shaSecret');
 
-	//
-	// check if text is hex content
-	const ishex = /[0-9A-Fa-f]{0,*}/g;
-
-	//ishex.test(text);
-
-	//
-	// create buffer from source string or hex
-  const data = (ishex.test(text))?
-		Uint8Array.from(text.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))):
-		Uint8Array.from(Array.from(text).map(char => char.charCodeAt(0)));
+  const data = toUint8Array(text);
   const key = Uint8Array.from(Array.from(pkey).map(char => char.charCodeAt(0)));
-
-
   // encoding are hex,base64,ascii, utf8
   const uint8 =  data.map((digit, i) => {
     return (digit ^ keyNumberAt(key, i));
@@ -214,12 +218,23 @@ export const xor = function(text:string, pkey?:string) :string {
 export const unxor = function(hex:string, pkey?:string) :string {   
   pkey = pkey || Config.option('shaSecret');
 	hex = (typeof hex == 'string')? hex: "00";
-  const data = Uint8Array.from(hex.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+
+  const data = toUint8Array(hex);
   const key = Uint8Array.from(Array.from(pkey).map(char => char.charCodeAt(0)));
+
   const uint8 = data.map((digit, i) => {
     return ( digit ^ keyNumberAt(key, i) );
   });
-	const encoding = uint8.some(char => char >=127) ? 'hex':'ascii';
+
+  //
+  // Emoticon (char >= 0x1F600 && char <= 0x1F64F)
+  // Miscellaneous Symbols (char >= 0x2600 && char<=0x26FF)
+  // Dingbats (char >= 0x2700 && char<=0x27BF)
+  // const decoded = Buffer.from(uint8).toString('utf8');  
+  // console.log('test emoji',/\p{Emoji}/u.test(decoded),uint8.some(char => char >=127));
+
+  // !/\p{Emoji}/u.test(decoded)
+	const encoding = uint8.some(char => char >=127) ? 'hex':'utf8';
   return Buffer.from(uint8).toString(encoding);
 }
 
@@ -230,8 +245,8 @@ export const crypto_fingerprint = function(input) {
 	return xor(hash);
 }
 
-export const crypto_randomToken = function() {
-	const hex = randomBytes(16).toString('hex');
+export const crypto_randomToken = function(bytes?) {
+	const hex = randomBytes(bytes||16).toString('hex');
 	return hex;
 }
 
