@@ -46,8 +46,9 @@ describe("payment.tools", function(){
 
   
   it("XOR encryp/decrypt crypto_randomToken", ()=>{
-    const rand = payments.crypto_randomToken();
+    const rand = payments.crypto_randomToken(128);
     const hex = payments.xor(rand,"test_123456");
+    // console.log(rand,'\n',hex)
     payments.unxor(hex,"test_123456").should.equal(rand);
   })
 
@@ -58,11 +59,40 @@ describe("payment.tools", function(){
     payments.unxor(hex,"test_123456").should.equal('pm_1N2uD4BTMLb4og7P1hMi07Qt');
   })
 
+
+  it("XOR encryp/decrypt non string", ()=>{
+    payments.xor(1234567);
+    payments.unxor(123456);
+  })
+
+
   it("XOR encryp/decrypt with config pkey", ()=>{
     const hex = payments.xor("Hello World");
     payments.unxor(hex).should.equal('Hello World');
+
   })
 
+  xit("XOR encryp/decrypt with Emoji", ()=>{
+    const hex = payments.xor("Hello World ♥️");
+    payments.unxor(hex).should.equal('Hello World ♥️');
+
+  })
+
+  xit("BUG:unxor bug from lookupCustomer", ()=>{
+    const key = 'tEcXWUtsm8ePoS1MNl9XFgS714dkJKRbgs8mVjUk';
+    const result = payments.unxor('17301007181439230c4d2a08030b5b170b5c',key);
+    console.log("result:",result,result.length);
+    
+    const wrong = '!}qBIFJ\\u0017X\\u001ci_z3\\u0017!j\\u0015';
+
+
+    const decoded = JSON.parse(`"${wrong}"`);
+
+    console.log("encode:",payments.xor(decoded,result))
+    console.log("decode:",payments.unxor(decoded,result))
+
+  })
+  
   it("payments.dateFromExpiry", function(done){
     const date=new Date(2017,1,0,23,59,0,0);
     // console.log(date)
