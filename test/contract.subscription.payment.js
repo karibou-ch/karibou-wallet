@@ -169,7 +169,7 @@ describe("Class subscription.payment", function(){
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
-    defaultSub.content.status.should.equal('incomplete')
+    defaultSub.content.status.should.equal('active')
     defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
   });
 
@@ -182,8 +182,13 @@ describe("Class subscription.payment", function(){
     let card = createTestMethodFromStripe(methodValid);
     const subOptions = { shipping,dayOfWeek,fees };
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
-    defaultSub.content.status.should.equal('active');
-    (defaultSub.content.latestPaymentIntent==null).should.equal(true);
+    should.exist(defaultSub.content.latestPaymentIntent);
+    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+    defaultSub.content.status.should.equal('active')
+    defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
+
+    //console.log('----',defaultSub.content)
+    should.exist(defaultSub.content.latestPaymentIntent.id);
   });
 
 });

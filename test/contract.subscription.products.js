@@ -28,11 +28,12 @@ describe("Class subscription.products", function(){
   let methodValid;
   let defaultCustomer;
  
-
   //
   // test card for 3ds
   // https://stripe.com/docs/testing?testing-method=card-numbers#authentification-et-configuration
   before(async function(){
+    config.option('debug',false)
+
     defaultCustomer = await customer.Customer.create("patreon@email.com","Foo","Bar","022345",1234);
     methodValid = await $stripe.paymentMethods.create({
       type: 'card',card: {

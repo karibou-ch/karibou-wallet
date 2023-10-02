@@ -6,8 +6,8 @@ import Config, { nonEnumerableProperties } from './config';
 
 //
 // using memory cache limited to 1000 customer in same time for 4h
-const cache = new (require("lru-cache").LRUCache)({ttl:1000 * 60 * 60 * 4,max:1000});
-const locked = new (require("lru-cache").LRUCache)({ttl:2000,max:1000});
+const cache = new (require("lru-cache").LRUCache)({ttl:1000 * 60 * 60 * 4,max:2000});
+const locked = new (require("lru-cache").LRUCache)({ttl:3000,max:1000});
 
 export class Customer {
 
@@ -138,16 +138,18 @@ export class Customer {
 
   // 
   // avoid reentrency
-  lock(api){
-    const islocked = locked.get(this.id+api)
+  lock(api,root?){
+    root = root||this.id;
+    const islocked = locked.get(root+api)
     if (islocked){
       throw new Error("reentrancy detection");
     }
-    locked.set(this.id+api,true);
+    locked.set(root+api,true);
   }
 
-  unlock(api) {
-    locked.delete(this.id+api);
+  unlock(api,root?) {
+    root = root||this.id;
+    locked.delete(root+api);
   }
 
   //
@@ -308,9 +310,8 @@ export class Customer {
     assert(this._metadata.fname);
     assert(this._metadata.lname);
     const _method = 'addaddress';
+    this.lock(_method);
     try{
-      this.lock(_method);
-
       const keys = metadataElements(this._metadata,'addr');
       address.id = 'addr-' + keys.length + 1;
       this._metadata[address.id] = JSON.stringify(address,null,0);
@@ -325,11 +326,11 @@ export class Customer {
       //
       // put this new customer in cache 4h
       cache.set(this.id,this);
-      this.unlock(_method);
       return Object.assign({},address);
     }catch(err) {
-      this.unlock(_method);
       throw parseError(err);
+    }finally{
+      this.unlock(_method);
     }     
   }
 
@@ -338,6 +339,8 @@ export class Customer {
     assert(this._metadata.fname);
     assert(this._metadata.lname);
     assert(this._metadata[address.id]);
+    const _method = 'addressRemove';
+    this.lock(_method);
 
     try{
       this._metadata[address.id] = null;
@@ -351,9 +354,11 @@ export class Customer {
       //
       // put this new customer in cache 4h
       cache.set(this.id,this);
-
+      return this;
     }catch(err) {
       throw parseError(err);
+    }finally{
+      this.unlock(_method);
     }     
   }
 
@@ -362,6 +367,8 @@ export class Customer {
     assert(this._metadata.fname);
     assert(this._metadata.lname);
     assert(this._metadata[address.id]);
+    const _method = 'addressUpdate';
+    this.lock(_method);
 
     try{
       this._metadata[address.id] = JSON.stringify(address,null,0);
@@ -375,9 +382,11 @@ export class Customer {
       //
       // put this new customer in cache 4h
       cache.set(this.id,this);
-
+      return this;
     }catch(err) {
       throw parseError(err);
+    }finally{
+      this.unlock(_method);
     }     
   }  
 
@@ -403,10 +412,10 @@ export class Customer {
   * @returns the payment method object
   */
   async addMethod(token:string) {
-    const _method = 'addmethod';
+    const _method = 'addmethod'
+    this.lock(_method);
 
     try{
-      this.lock(_method);
       const method:any = await $stripe.paymentMethods.attach(token,{customer:this._id});
       if(method.status == "requires_action") {
         //
@@ -431,46 +440,49 @@ export class Customer {
       //
       // put this new customer in cache 4h
       cache.set(this.id,this);
-      this.unlock(_method);
 
       return card;
     }catch(err) {
-      this.unlock(_method);
       throw parseError(err);
-    } 
+    } finally{
+      this.unlock(_method);
+    }
   }
 
 
   //
   // update customer balance with coupon code
   async applyCoupon(code:string) {
-    const _method = 'appcoupon';
-
-    this.lock(_method);
-    const coupon = await $stripe.coupons.retrieve(
-      code
-    );
-
-
-    const amount = coupon.amount_off;
-    const validity = new Date(coupon.created*1000 + (coupon.duration_in_months||12)*32*86400000);
-    if (validity.getTime()<Date.now()){
-      throw new Error("Le coupon n'est plus valide, merci de bien vouloir nous contacter");
+    const _method = 'appcoupon'+code;
+    this.lock(_method,'');
+    try{
+      const coupon = await $stripe.coupons.retrieve(
+        code
+      );
+  
+  
+      const amount = coupon.amount_off;
+      const validity = new Date(coupon.created*1000 + (coupon.duration_in_months||12)*32*86400000);
+      if (validity.getTime()<Date.now()){
+        throw new Error("Le coupon n'est plus valide, merci de bien vouloir nous contacter");
+      }
+  
+      if(!amount || amount<0) {
+        throw new Error("le coupon ne contient pas de crédit");
+      }
+  
+      const note = code+':'+coupon.name;
+  
+      //
+      // it's more safe to remove code 
+      await $stripe.coupons.del(code);
+      await this.updateCredit(amount/100,note);
+      return this;
+    }catch(err) {
+      throw err;
+    }finally{
+      this.unlock(_method,'');
     }
-
-    if(!amount || amount<0) {
-      this.unlock(_method);
-      throw new Error("le coupon ne contient pas de crédit");
-    }
-
-    const note = code+':'+coupon.name;
-
-    //
-    // it's more safe to remove code 
-    await $stripe.coupons.del(code);
-    await this.updateCredit(amount/100,note);
-    this.unlock(_method);
-    return this;
   }
 
   //
@@ -534,59 +546,66 @@ export class Customer {
   // If negative, the customer has credit to apply to their next payment. 
   // Only admin user can update the available credit value
   async allowCredit(allow:boolean, month?:string,year?:string) {
-
-    const fingerprint = crypto_fingerprint(this.id+this.uid+'invoice');
-    const id = crypto_randomToken();
-    const mo = parseInt(month||'1');
-    if(mo<1 || mo>12 ){
-      throw new Error("Incorret month params")
-    }
+    const _method = 'allowCredit';
+    this.lock(_method);
+    try{
+      const fingerprint = crypto_fingerprint(this.id+this.uid+'invoice');
+      const id = crypto_randomToken();
+      const mo = parseInt(month||'1');
+      if(mo<1 || mo>12 ){
+        throw new Error("Incorret month params")
+      }
+      
+      let creditbalance:CreditBalance;
+      if(allow) {
+        year = parseYear((year||'2030')+'')
+        creditbalance = {
+          type:KngPayment.credit,
+          id:xor(id),
+          alias:(fingerprint),
+          expiry:(month||'12') +'/'+ (year),
+          funding:'credit',
+          issuer:'invoice',
+          limit:Config.option('allowMaxCredit')
+        }
     
-    let creditbalance:CreditBalance;
-    if(allow) {
-      year = parseYear((year||'2030')+'')
-      creditbalance = {
-        type:KngPayment.credit,
-        id:xor(id),
-        alias:(fingerprint),
-        expiry:(month||'12') +'/'+ (year),
-        funding:'credit',
-        issuer:'invoice',
-        limit:Config.option('allowMaxCredit')
+    
+    
+        //
+        // expose Credit Balance to this customer
+        this._metadata['creditbalance'] = JSON.stringify(creditbalance,null,0);
+    
+        //
+        // this is the signature of an credit authorization
+        this._sources.push(creditbalance);
+  
+  
+      }else {
+        this._metadata['allowCredit'] = null;
+        this._metadata['creditbalance'] = null;
+        const index:number= this._sources.findIndex(src => src.issuer == 'invoice');
+        if(index>-1){
+          this._sources.splice(index,1);
+        }
       }
   
-  
+      const customer = await $stripe.customers.update(
+        this._id,
+        {metadata: this._metadata}
+      );
   
       //
-      // expose Credit Balance to this customer
-      this._metadata['creditbalance'] = JSON.stringify(creditbalance,null,0);
+      // put this new customer in cache 4h
+      cache.set(this.id,this);
   
       //
-      // this is the signature of an credit authorization
-      this._sources.push(creditbalance);
-
-
-    }else {
-      this._metadata['allowCredit'] = null;
-      this._metadata['creditbalance'] = null;
-      const index:number= this._sources.findIndex(src => src.issuer == 'invoice');
-      if(index>-1){
-        this._sources.splice(index,1);
-      }
+      // return credit card when it exist
+      return creditbalance;
+    }catch(err) {
+      throw err;
+    }finally{
+      this.unlock(_method);
     }
-
-    const customer = await $stripe.customers.update(
-      this._id,
-      {metadata: this._metadata}
-    );
-
-    //
-    // put this new customer in cache 4h
-    cache.set(this.id,this);
-
-    //
-    // return credit card when it exist
-    return creditbalance;
   }
 
 
@@ -596,32 +615,40 @@ export class Customer {
   // We can activate his cash balance and also authorize a amount of credit 
   // that represents liability between us and the customer.
   async createCashBalance(month:string,year:string):Promise<CashBalance>{
-    const cashbalance:CashBalance = createCashMethod(this.id,this.uid,month,year);
+    const _method = 'createCashBalance';
+    this.lock(_method);
+    try{
+      const cashbalance:CashBalance = createCashMethod(this.id,this.uid,month,year);
 
-    //
-    // expose Cash Balance to this customer
-    this._metadata['cashbalance'] = JSON.stringify(cashbalance,null,0);
-    const customer = await $stripe.customers.update(
-      this._id,
-      {metadata: this._metadata,expand:['cash_balance']}
-    );
-
-    this._cashbalance = customer.cash_balance ||{};
-    this._metadata = customer.metadata;
-    this._addresses = parseAddress(customer.metadata);  
-
-    const index = this._sources.findIndex(card => card.alias == (cashbalance.alias));;
-    if(index>-1){
-      this._sources[index]=cashbalance;
-    }else{
-      this._sources.push(cashbalance);
+      //
+      // expose Cash Balance to this customer
+      this._metadata['cashbalance'] = JSON.stringify(cashbalance,null,0);
+      const customer = await $stripe.customers.update(
+        this._id,
+        {metadata: this._metadata,expand:['cash_balance']}
+      );
+  
+      this._cashbalance = customer.cash_balance ||{};
+      this._metadata = customer.metadata;
+      this._addresses = parseAddress(customer.metadata);  
+  
+      const index = this._sources.findIndex(card => card.alias == (cashbalance.alias));;
+      if(index>-1){
+        this._sources[index]=cashbalance;
+      }else{
+        this._sources.push(cashbalance);
+      }
+  
+      //
+      // put this new customer in cache 4h
+      cache.set(this.id,this);
+  
+      return cashbalance;      
+    }catch(err){
+      throw err;
+    }finally{
+      this.unlock(_method);
     }
-
-    //
-    // put this new customer in cache 4h
-    cache.set(this.id,this);
-
-    return cashbalance;
   }
 
   async listBalanceTransactions(limit?:number) {
@@ -722,6 +749,9 @@ export class Customer {
   * @returns {any} Promise on deletion of the source
   */
   async removeMethod(method:KngCard) {
+    const _method = 'removeMethod';
+    this.lock(_method);
+
     try{
       if(!method || !method.id) {
         throw new Error("La méthode de paiement n'est pas valide");
@@ -801,6 +831,8 @@ export class Customer {
       cache.set(this.id,this);
     }catch(err) {
       throw (parseError(err));
+    }finally{
+      this.unlock(_method);
     }
 
   }
@@ -826,7 +858,6 @@ export class Customer {
       // max negative credit verification
       if((this.balance + amount)<0) {
         if(!this.allowedCredit()){
-          this.unlock(_method);
           throw new Error("Le paiement par crédit n'est pas disponible");
         }
 
@@ -835,13 +866,11 @@ export class Customer {
         const fingerprint = crypto_fingerprint(this.id+this.uid+'invoice');
         const check = await this.checkMethods(false);
         if(check[fingerprint].error) {
-          this.unlock(_method);
           throw new Error(check[fingerprint].error);
         }
 
         const maxcredit = Config.option('allowMaxCredit')/100;    
         if((this.balance + amount)<(-maxcredit)) {
-          this.unlock(_method);
           throw new Error("Vous avez atteind la limite de crédit de votre compte");
         }
       }
@@ -850,7 +879,6 @@ export class Customer {
       // max amount credit verification
       const maxamount = Config.option('allowMaxAmount')/100;    
       if((this.balance + amount)>maxamount) {
-        this.unlock(_method);
         throw new Error("Vous avez atteind la limite de votre portefeuille "+maxamount.toFixed(2)+" chf");
       }
 

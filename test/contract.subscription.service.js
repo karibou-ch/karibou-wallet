@@ -60,6 +60,7 @@ describe("Class subscription for service only", function(){
 
 
   before(async function(){
+    config.option('debug',false)
     defaultCustomer = await customer.Customer.create("subscription@email.com","Foo","Bar","022345",1234);
     const card = await defaultCustomer.addMethod(unxor(card_mastercard_prepaid.id));
     defaultTx = await transaction.Transaction.authorize(defaultCustomer,card,2,paymentOpts)
@@ -126,7 +127,7 @@ describe("Class subscription for service only", function(){
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
     defaultSub.content.status.should.equal("active");
-    should.not.exist(defaultSub.content.latestPaymentIntent);
+    should.exist(defaultSub.content.latestPaymentIntent);
     defaultSub.content.items.length.should.equal(0);
     defaultSub.content.services.length.should.equal(1);
     const oneDay = 24 * 60 * 60 * 1000;

@@ -34,6 +34,7 @@ describe("contract.subscription.invoice", function(){
   let defaultTx;
 
   // start next week
+  let dateNow = new Date();
   let dateValid = new Date(Date.now() + 86400000*7);
   let pausedUntil = new Date(Date.now() + 86400000*30);
  
@@ -101,7 +102,7 @@ describe("contract.subscription.invoice", function(){
     const s_karibou = defaultSub.content.services.find(item => item.title=='karibou.ch');
     const oneDay = 24 * 60 * 60 * 1000;
     const nextInvoice = defaultSub.content.nextInvoice;
-    Math.round((nextInvoice - dateValid)/oneDay).should.equal(7)
+    Math.round((nextInvoice - dateNow)/oneDay).should.equal(7)
 
   });
 

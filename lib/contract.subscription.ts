@@ -7,6 +7,7 @@ import Config from './config';
 //
 // using memory cache limited to 1000 customer in same time for 4h
 const cache = new (require("lru-cache").LRUCache)({ttl:1000 * 60 * 60 * 4,max:1000});
+const locked = new (require("lru-cache").LRUCache)({ttl:3000,max:1000});
 
 export type Interval = Stripe.Plan.Interval;
 
@@ -312,6 +313,7 @@ export class SubscriptionContract {
   //   );
   // }
 
+
   async customer(){
     try{
       return await Customer.get(this._subscription.customer);
@@ -340,6 +342,15 @@ export class SubscriptionContract {
   // replaces the previous contract with the new items and price 
   // https://stripe.com/docs/billing/subscriptions/upgrade-downgrade
   async updateContract(cardTtems) {
+    const _method = 'updateContract'+cardTtems.length;
+    lock(_method);
+    try{
+
+    }catch(err){
+
+    }finally{
+      unlock(_method);
+    }
 
   }
 
@@ -432,74 +443,76 @@ export class SubscriptionContract {
     const quantity = 1;
     const price = product.default_price.unit_amount;
 
-    //
-    // create metadata karibou model
-    // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
-    const metadata:any = { uid:customer.uid, plan:'patreon' };
-
-    //
-    // avoid webhook
-    if(process.env.NODE_ENV=='test'){
-      metadata.env="test";
-    }
-
-    //
-    // missing fees (see documentation for fees inclusion)
-    // warning unit_amount is positive integer in cents 
-    const serviceItem:SubscriptionItem = { 
-      currency : 'CHF', 
-      unit_amount : isInvoice? 0:(price),
-      product : product.id,
-      recurring : { interval, interval_count: 1 }
-    };
-    const itemMetadata = {
-      type:"patreon",
-      title: product.name,
-      quantity,
-    }
-
-    const items = [{metadata:itemMetadata, quantity,price_data:serviceItem}];    
-
-    const description = product.description;
-    // FIXME, manage SCA or pexpired card in subscription workflow
-    // https://stripe.com/fr-ch/guides/strong-customer-authentication#exemptions-de-lauthentification-forte-du-client
-    //
-    // payment_behavior for 3ds or expired card 
-    // - allow_incomplete accept subscript delegate the payment in external process
-    // - default_incomplete same as allow_incomplete with a limit of 23 hours (status=incomplete_expired)
-    // Testing
-    // - https://stripe.com/docs/billing/testing
-    // - https://stripe.com/docs/billing/subscriptions/build-subscriptions?ui=elements#test
-    // - https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
-
-
-    //
-    // with 'default_incomplete' the subscription is deleted after 24h without payment confirmation
-    // without billing_cycle_anchor l’abonnement sera facturé le dernier jour du mois.
-    const billing_cycle_anchor = (Date.now()+30000)/1000|0;
-    const options = {
-      customer: unxor(customer.id),
-      payment_behavior:'default_incomplete',
-      off_session:false,
-      billing_cycle_anchor,
-      description,
-      items,
-      metadata 
-    } as Stripe.SubscriptionCreateParams;
-
-    //
-    // payment method
-    // use invoice default_pament_method for Stripe 
-    if(card.issuer=="invoice") {
-      metadata.payment_credit=card.id;
-      options.payment_behavior = 'allow_incomplete';
-      options.payment_settings = {}
-    } else {
-      options.default_payment_method=unxor(card.id);
-      options.expand = ['pending_setup_intent','latest_invoice.payment_intent']
-    }
-
+    const _method = 'createOnlyFromService'+customer.id;
+    lock(_method);
     try{
+      //
+      // create metadata karibou model
+      // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
+      const metadata:any = { uid:customer.uid, plan:'patreon' };
+
+      //
+      // avoid webhook
+      if(process.env.NODE_ENV=='test'){
+        metadata.env="test";
+      }
+
+      //
+      // missing fees (see documentation for fees inclusion)
+      // warning unit_amount is positive integer in cents 
+      const serviceItem:SubscriptionItem = { 
+        currency : 'CHF', 
+        unit_amount : isInvoice? 0:(price),
+        product : product.id,
+        recurring : { interval, interval_count: 1 }
+      };
+      const itemMetadata = {
+        type:"patreon",
+        title: product.name,
+        quantity,
+      }
+
+      const items = [{metadata:itemMetadata, quantity,price_data:serviceItem}];    
+
+      const description = product.description;
+      // FIXME, manage SCA or pexpired card in subscription workflow
+      // https://stripe.com/fr-ch/guides/strong-customer-authentication#exemptions-de-lauthentification-forte-du-client
+      //
+      // payment_behavior for 3ds or expired card 
+      // - allow_incomplete accept subscript delegate the payment in external process
+      // - default_incomplete same as allow_incomplete with a limit of 23 hours (status=incomplete_expired)
+      // Testing
+      // - https://stripe.com/docs/billing/testing
+      // - https://stripe.com/docs/billing/subscriptions/build-subscriptions?ui=elements#test
+      // - https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
+
+
+      //
+      // with 'default_incomplete' the subscription is deleted after 24h without payment confirmation
+      // without billing_cycle_anchor l’abonnement sera facturé le dernier jour du mois.
+      const billing_cycle_anchor = (Date.now()+1000)/1000|0;
+      const options = {
+        customer: unxor(customer.id),
+        payment_behavior:'default_incomplete',
+        off_session:false,
+        billing_cycle_anchor,
+        description,
+        items,
+        metadata 
+      } as Stripe.SubscriptionCreateParams;
+
+      //
+      // payment method
+      // use invoice default_pament_method for Stripe 
+      if(card.issuer=="invoice") {
+        metadata.payment_credit=card.id;
+        options.payment_behavior = 'allow_incomplete';
+        options.payment_settings = {}
+      } else {
+        options.default_payment_method=unxor(card.id);
+        options.expand = ['pending_setup_intent','latest_invoice.payment_intent']
+      }
+
       //
       // https://stripe.com/docs/billing/testing
       const subscription = await $stripe.subscriptions.create(options);  
@@ -509,7 +522,7 @@ export class SubscriptionContract {
       // always confirm pending invoice
       // this will update the latest_invoice ?
       if(invoice && 
-         invoice.payment_intent ) {
+          invoice.payment_intent ) {
         const tid = invoice.payment_intent['id']||invoice.payment_intent;
         //
         // refused payment method trow an Error()
@@ -523,12 +536,14 @@ export class SubscriptionContract {
           subscription.latest_invoice['payment_intent'] = err.payment_intent;            
         }
       }
-     
-  
+
       return new SubscriptionContract(subscription);  
-    }catch(err) {
+    }catch(err){
       throw parseError(err);
+    }finally{
+      unlock(_method);
     }
+
 
 
   }
@@ -556,179 +571,203 @@ export class SubscriptionContract {
 
     const {shipping, dayOfWeek, fees} = subscriptionOptions;
     assert(fees>=0)
-
+    const _method = 'create'+customer.id;
+    lock(_method);
+    
     //
     // validate start_from when interval is month
     // FIXME avoid billing error we need to know any error 3 days before the shipping
 
 
-    //
-    // validate fees range [0..1]
-    if((fees>1) || (fees <0)) {
-      throw new Error("Incorrect fees params");
-    }
-
-    //
-    // filter cartItems for services or products
-    const cartServices = cartItems.filter(item => !item.sku);
-    cartItems = cartItems.filter(item => !!item.sku);
-
-    if(!shipping && cartItems.length){
-      throw new Error("Shipping address is mandatory with products");      
-    }
-
-    if (!cartServices.length && !cartItems.length) {
-      throw new Error("Missing items");            
-    }
-
-    //
-    // create stripe products
-    if(cartItems.some(item => item.frequency!=interval)){
-      throw new Error("incorrect item format");
-    }
-    const isInvoice = card.issuer == "invoice";
-
-    // check is subscription must be updated or created
-    for(let item of cartItems) {
-      item.product = await findOrCreateProductFromItem(item);
-    }
-    // group items by interval, day, week, month
-    const items = createItemsFromCart(cartItems,isInvoice);
-
-    //
-    // compute service fees
-    const servicePrice = cartItems.reduce((sum, item) => {
-      return sum + (item.price * item.quantity * (fees));
-    }, 0)
-
-    //
-    // create an item for karibou.ch service fees and shipping
-    if(cartItems.length&&servicePrice>=0) {
-      const item = {
-        id:'service',
-        title:'karibou.ch',
-        price:round1cts(servicePrice),
-        quantity:1        
+    try{
+      //
+      // validate fees range [0..1]
+      if((fees>1) || (fees <0)) {
+        throw new Error("Incorrect fees params");
       }
-      const itemService = await findOrCreateItemService(item,interval, isInvoice)
-      items.push(itemService);  
-    }
 
-    if(cartServices.length) {
-      for(let elem of cartServices) {
+      //
+      // filter cartItems for services or products
+      const cartServices = cartItems.filter(item => !item.sku);
+      cartItems = cartItems.filter(item => !!item.sku);
+
+      if(!shipping && cartItems.length){
+        throw new Error("Shipping address is mandatory with products");      
+      }
+
+      if (!cartServices.length && !cartItems.length) {
+        throw new Error("Missing items");            
+      }
+
+      //
+      // create stripe products
+      if(cartItems.some(item => item.frequency!=interval)){
+        throw new Error("incorrect item format");
+      }
+      const isInvoice = card.issuer == "invoice";
+
+      // check is subscription must be updated or created
+      for(let item of cartItems) {
+        item.product = await findOrCreateProductFromItem(item);
+      }
+      // group items by interval, day, week, month
+      const items = createItemsFromCart(cartItems,isInvoice);
+
+      //
+      // compute service fees
+      const servicePrice = cartItems.reduce((sum, item) => {
+        return sum + (item.price * item.quantity * (fees));
+      }, 0)
+
+      //
+      // create an item for karibou.ch service fees and shipping
+      if(cartItems.length&&servicePrice>=0) {
         const item = {
           id:'service',
-          title:elem.title,
-          price:elem.price,
-          quantity:elem.quantity        
-        }  
+          title:'karibou.ch',
+          price:round1cts(servicePrice),
+          quantity:1        
+        }
         const itemService = await findOrCreateItemService(item,interval, isInvoice)
         items.push(itemService);  
       }
 
-    }
-    //
-    // create metadata karibou model
-    // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
-    const metadata:any = { uid:customer.uid, fees,plan:(cartItems.length)?'shipping':'service' };
+      if(cartServices.length) {
+        for(let elem of cartServices) {
+          const item = {
+            id:'service',
+            title:elem.title,
+            price:elem.price,
+            quantity:elem.quantity        
+          }  
+          const itemService = await findOrCreateItemService(item,interval, isInvoice)
+          items.push(itemService);  
+        }
 
-    //
-    // avoid webhook
-    if(process.env.NODE_ENV=='test'){
-      metadata.env="test";
-    }
-
-    if(shipping) {
-      assert(shipping.price>=0);
-      assert(dayOfWeek>=0);
-      delete shipping['geo'];  
-      const item = {
-        id:'service',
-        title:'shipping',
-        price:shipping.price,
-        quantity:1        
       }
-      const itemShipping = await findOrCreateItemService(item,interval, isInvoice)
-      items.push(itemShipping);
-  
       //
-      // clean shipping
-      metadata.address = JSON.stringify(shipping,null,0);
-      metadata.dayOfWeek = dayOfWeek
-    }
+      // create metadata karibou model
+      // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
+      const metadata:any = { uid:customer.uid, fees,plan:(cartItems.length)?'shipping':'service' };
+
+      //
+      // avoid webhook
+      if(process.env.NODE_ENV=='test'){
+        metadata.env="test";
+      }
+
+      if(shipping) {
+        assert(shipping.price>=0);
+        assert(dayOfWeek>=0);
+        delete shipping['geo'];  
+        const item = {
+          id:'service',
+          title:'shipping',
+          price:shipping.price,
+          quantity:1        
+        }
+        const itemShipping = await findOrCreateItemService(item,interval, isInvoice)
+        items.push(itemShipping);
+    
+        //
+        // clean shipping
+        metadata.address = JSON.stringify(shipping,null,0);
+        metadata.dayOfWeek = dayOfWeek
+      }
 
 
 
 
-    const description = "contrat:" + interval + ":"+ customer.uid;
-    // FIXME, manage SCA or pexpired card in subscription workflow
-    // https://stripe.com/fr-ch/guides/strong-customer-authentication#exemptions-de-lauthentification-forte-du-client
-    //
-    // payment_behavior for 3ds or expired card 
-    // - allow_incomplete accept subscript delegate the payment in external process
-    // - default_incomplete same as allow_incomplete with a limit of 23 hours (status=incomplete_expired)
-    // Testing
-    // - https://stripe.com/docs/billing/testing
-    // - https://stripe.com/docs/billing/subscriptions/build-subscriptions?ui=elements#test
-    // - https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
+      const description = "contrat:" + interval + ":"+ customer.uid;
+      // FIXME, manage SCA or pexpired card in subscription workflow
+      // https://stripe.com/fr-ch/guides/strong-customer-authentication#exemptions-de-lauthentification-forte-du-client
+      //
+      // payment_behavior for 3ds or expired card 
+      // - allow_incomplete accept subscript delegate the payment in external process
+      // - default_incomplete same as allow_incomplete with a limit of 23 hours (status=incomplete_expired)
+      // Testing
+      // - https://stripe.com/docs/billing/testing
+      // - https://stripe.com/docs/billing/subscriptions/build-subscriptions?ui=elements#test
+      // - https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
 
 
-    //
-    // with 'default_incomplete' the subscription is deleted after 24h without payment confirmation
-    const options = {
-      customer: unxor(customer.id),
-      payment_behavior:'default_incomplete',
-      off_session:false,
-      description,
-      items:items,
-      metadata 
-    } as Stripe.SubscriptionCreateParams;
+      //
+      // with 'default_incomplete' the subscription is deleted after 24h without payment confirmation
+      // BUT, default_incomplete explicitly defers the payment 
+      const options = {
+        customer: unxor(customer.id),
+        payment_behavior:'default_incomplete',
+        off_session:false,
+        description,
+        proration_behavior:'none',
+        items:items,
+        metadata 
+      } as Stripe.SubscriptionCreateParams;
 
-    // 3 days before the 1st tuesday of the next week/month    
-    if(start_from=='now') {
-      options.billing_cycle_anchor = (Date.now()+30000)/1000|0;
-    }else {
-      options.billing_cycle_anchor = (start_from.getTime()/1000)|0;
-    }
+      // 3 days before the 1st tuesday of the next week/month    
+      if(start_from=='now') {
+        //options.billing_cycle_anchor = (Date.now()+1000)/1000|0;
+      }else {
+        //
+        // start from generate a setup_intents instead of payment_intents
+        //options.billing_cycle_anchor = (start_from.getTime()/1000)|0;
+      }
 
-    //
-    // payment method
-    // use invoice default_pament_method for Stripe 
-    if(card.issuer=="invoice") {
-      metadata.payment_credit=card.id;
-      options.payment_behavior = 'allow_incomplete';
-      options.payment_settings = {}
-    } else {
-      options.default_payment_method=unxor(card.id);
-      options.expand = ['pending_setup_intent','latest_invoice.payment_intent']
-    }
+      //
+      // payment method
+      // use invoice default_pament_method for Stripe 
+      if(card.issuer=="invoice") {
+        metadata.payment_credit=card.id;
+        options.payment_behavior = 'allow_incomplete';
+        options.payment_settings = {}
+      } else {
 
-    try{
+        //
+        // default_payment_method [4], then you can use different payment_behavior (allow_incomplete) to allow an initial 
+        // payment attempt immediately and handle potential actions only, if required.
+        options.payment_behavior = 'default_incomplete';
+        options.payment_settings = { save_default_payment_method: 'on_subscription' };
+        options.default_payment_method=unxor(card.id);
+        options.expand = ['latest_invoice.payment_intent']
+      }
+
       //
       // https://stripe.com/docs/billing/testing
-      const subscription = await $stripe.subscriptions.create(options);  
-      const invoice = subscription.latest_invoice  as Stripe.Invoice;
+      let subscription = await $stripe.subscriptions.create(options);  
       
       //
       // always confirm pending invoice
       // this will update the latest_invoice ?
-      if(invoice && 
-         invoice.payment_intent ) {
-        const tid = invoice.payment_intent['id']||invoice.payment_intent;
+      const now = Date.now();
+      //
+      // WRONG status pending setup_intent 
+      const setup_intent = subscription.pending_setup_intent as Stripe.SetupIntent;
+
+      // if(setup_intent) {
+      //   const setupDone = await $stripe.setupIntents.confirm(setup_intent.id);
+      //   subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
+      // }
+      const invoice = subscription.latest_invoice  as Stripe.Invoice;
+      const invoice_intent = invoice && invoice.payment_intent as Stripe.PaymentIntent;
+
+      if(invoice_intent ) {
         //
         // refused payment method trow an Error()
         try{
-          const transaction = await $stripe.paymentIntents.confirm(tid);  
+          const transaction = await $stripe.paymentIntents.confirm(invoice_intent.id);  
+          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
           subscription.latest_invoice['payment_intent'] = transaction;
+          subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
         }catch(err) { 
           if (!err.payment_intent){
             throw err;
           }
+          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
           subscription.latest_invoice['payment_intent'] = err.payment_intent;            
         }
       }
      
-   
+
       //
       //
       // this.content.paymentIntent
@@ -749,6 +788,8 @@ export class SubscriptionContract {
       return new SubscriptionContract(subscription);  
     }catch(err) {
       throw parseError(err);
+    }finally{
+      unlock(_method);
     }
   }
 
@@ -879,6 +920,21 @@ async function findOrCreateProductFromItem(item) {
   cache.set(item.sku,created.id);
   return created.id;
 }
+
+// 
+// avoid reentrency
+function lock(api){
+  const islocked = locked.get(api)
+  if (islocked){
+    throw new Error("reentrancy detection");
+  }
+  locked.set(api,true);
+}
+
+function unlock(api) {
+  locked.delete(api);
+}
+
 
 async function findOrCreateItemService(item, interval, isInvoice) {
   const { id,title,price, quantity } = item;
