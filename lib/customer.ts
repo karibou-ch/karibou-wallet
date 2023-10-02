@@ -245,7 +245,7 @@ export class Customer {
 
    static clearCache(id) {
     // use the stripe id
-    id = id.indexOf('cus_')>-1? id: unxor(id);
+    id = id.indexOf('cus_')==-1? id: xor(id);
     cache.delete(id);
   }
 

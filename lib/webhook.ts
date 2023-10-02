@@ -94,9 +94,8 @@ export class Webhook {
       // clear cache on subscription ending
       if(event.type == 'customer.subscription.deleted'){        
         const stripe = event.data.object as Stripe.Subscription;
-        const subscription = await SubscriptionContract.get(stripe.id)
         SubscriptionContract.clearCache(stripe.id);
-        return { event: event.type, subscription } as WebhookStripe;
+        return { event: event.type } as WebhookStripe;
       }
       // 
       // on invoice payment action required
@@ -111,7 +110,7 @@ export class Webhook {
         }
 
 
-        const paymentIntent = invoice.payment_intent.toString();
+        const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
         const transaction = await Transaction.get(xor(paymentIntent));
         const customer = await contract.customer();
         //
@@ -132,12 +131,11 @@ export class Webhook {
         }
 
 
-        const paymentIntent = invoice.payment_intent.toString();
+        const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
         const transaction = await Transaction.get(xor(paymentIntent));
         const customer = await contract.customer();
         //
         // set pending payment intent, customer have 23h to confirm payment
-
         return { event: event.type ,testing,contract, customer, transaction,error:false} as WebhookStripe;
       }
 
