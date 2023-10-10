@@ -514,12 +514,24 @@ export  class  Transaction {
       // case of KngCard
       // normAmount remove the amount paid from customer credit
       else {
+        const payment = this._payment as Stripe.PaymentIntent;
         //
         // if amount is 0 (including shipping), cancel and mark it as paid
         // ONLY available for payment intents
         if(amount === 0) {
           this._payment = await $stripe.paymentIntents.cancel(this._payment.id);
-        } else {
+        }
+        //
+        // Perform an incremental authorization when normAmount is greater than 
+        // the currently authorized amount.
+        // https://stripe.com/docs/terminal/features/incremental-authorizations
+        // else if ((normAmount)> payment.amount_capturable) {
+        //   await $stripe.paymentIntents.incrementAuthorization(
+        //     this._payment.id,
+        //     {amount: normAmount}
+        //   );
+        // } 
+        else {
           this._payment = await $stripe.paymentIntents.capture( this._payment.id , { 
             amount_to_capture: normAmount 
           });  

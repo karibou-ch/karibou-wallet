@@ -1,7 +1,7 @@
 import { strict as assert } from 'assert';
+import Config from './config';
 import Stripe from 'stripe';
 import { $stripe, xor } from './payments';
-import Config from './config';
 import { Transaction } from './transaction';
 import { SubscriptionContract } from './contract.subscription';
 import { Customer } from './customer';
@@ -11,7 +11,7 @@ export interface WebhookStripe {
   error:boolean;
   balance?:boolean;
   customer?:Customer;
-  subscription?: SubscriptionContract;
+  contract?: SubscriptionContract;
   transaction?: Transaction;
   testing: boolean;
 }
@@ -93,9 +93,16 @@ export class Webhook {
       //
       // clear cache on subscription ending
       if(event.type == 'customer.subscription.deleted'){        
-        const stripe = event.data.object as Stripe.Subscription;
-        SubscriptionContract.clearCache(stripe.id);
-        return { event: event.type } as WebhookStripe;
+        const stripeContract = event.data.object as Stripe.Subscription;
+        const customer = await Customer.get(xor(stripeContract.customer.toString()));
+        const contract = {
+          id: xor(stripeContract.id),
+          content: {
+            customer:customer.uid
+          }
+        } as SubscriptionContract;
+        SubscriptionContract.clearCache(stripeContract.id);
+        return { event: event.type, contract } as WebhookStripe;
       }
       // 
       // on invoice payment action required
@@ -106,7 +113,7 @@ export class Webhook {
         const contract = await SubscriptionContract.get(invoice.subscription);        
         const testing = (contract.environnement == 'test')
         if(testing) {
-          return { event: event.type,testing, error:false};
+          return { event: event.type,testing,contract, error:false};
         }
 
 
@@ -127,7 +134,7 @@ export class Webhook {
         const contract = await SubscriptionContract.get(invoice.subscription);        
         const testing = (contract.environnement == 'test')
         if(testing) {
-          return { event: event.type,testing, error:false};
+          return { event: event.type,testing, contract, error:false};
         }
 
 

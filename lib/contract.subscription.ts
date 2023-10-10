@@ -12,6 +12,7 @@ const locked = new (require("lru-cache").LRUCache)({ttl:3000,max:1000});
 export type Interval = Stripe.Plan.Interval;
 
 export interface SubscriptionProductItem{
+  id: string,
   unit_amount: number,
   currency:string,
   quantity:number,
@@ -59,7 +60,7 @@ export interface SubscriptionAddress extends KngPaymentAddress {
 export interface Subscription {
   id:string;
   plan:"service"|"shipping"|"patreon"|string;
-  customer: string;
+  customer: string;// as karibou id
   description: string;
   start:Date;
   nextInvoice:Date;
@@ -108,6 +109,7 @@ interface SubscriptionMetaItem {
 
 // Unit amount is a positive integer in cents 
 interface SubscriptionItem {
+  id?:string;
   currency:string;
   unit_amount:number; 
   product:string;
@@ -313,6 +315,10 @@ export class SubscriptionContract {
   //   );
   // }
 
+  findOneItem(sku){
+    const items = this._subscription.items.data||[];
+    return items.find(item=> item.metadata.sku == sku);
+  }
 
   async customer(){
     try{
@@ -335,23 +341,6 @@ export class SubscriptionContract {
 
     cache.set(this._subscription.id,this);
     return this;
-  }
-
-  //
-  // update the contract with  karibou cart items
-  // replaces the previous contract with the new items and price 
-  // https://stripe.com/docs/billing/subscriptions/upgrade-downgrade
-  async updateContract(cardTtems) {
-    const _method = 'updateContract'+cardTtems.length;
-    lock(_method);
-    try{
-
-    }catch(err){
-
-    }finally{
-      unlock(_method);
-    }
-
   }
 
   //
@@ -585,6 +574,11 @@ export class SubscriptionContract {
       if((fees>1) || (fees <0)) {
         throw new Error("Incorrect fees params");
       }
+      // in case of shipping
+      if(shipping) {
+        assert(shipping.price>=0);
+        assert(dayOfWeek>=0);
+      }
 
       //
       // filter cartItems for services or products
@@ -604,78 +598,39 @@ export class SubscriptionContract {
       if(cartItems.some(item => item.frequency!=interval)){
         throw new Error("incorrect item format");
       }
-      const isInvoice = card.issuer == "invoice";
-
-      // check is subscription must be updated or created
-      for(let item of cartItems) {
-        item.product = await findOrCreateProductFromItem(item);
-      }
-      // group items by interval, day, week, month
-      const items = createItemsFromCart(cartItems,isInvoice);
 
       //
-      // compute service fees
-      const servicePrice = cartItems.reduce((sum, item) => {
-        return sum + (item.price * item.quantity * (fees));
-      }, 0)
+      // build items based on user cart
+      const itemsOptions = {
+        invoice:(card.issuer=='invoice'), 
+        interval, 
+        serviceFees:fees,
+        shipping
+      }
+
+      const {items, servicePrice, contractShipping } = await createContractItemsForShipping(null,cartServices, cartItems, itemsOptions);
 
       //
-      // create an item for karibou.ch service fees and shipping
-      if(cartItems.length&&servicePrice>=0) {
-        const item = {
-          id:'service',
-          title:'karibou.ch',
-          price:round1cts(servicePrice),
-          quantity:1        
-        }
-        const itemService = await findOrCreateItemService(item,interval, isInvoice)
-        items.push(itemService);  
-      }
+      // be sure
+      // assert(servicePrice>0);
 
-      if(cartServices.length) {
-        for(let elem of cartServices) {
-          const item = {
-            id:'service',
-            title:elem.title,
-            price:elem.price,
-            quantity:elem.quantity        
-          }  
-          const itemService = await findOrCreateItemService(item,interval, isInvoice)
-          items.push(itemService);  
-        }
-
-      }
       //
       // create metadata karibou model
       // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
       const metadata:any = { uid:customer.uid, fees,plan:(cartItems.length)?'shipping':'service' };
 
       //
+      // use clean shipping with price included
+      if(contractShipping) {
+        metadata.address = JSON.stringify(contractShipping,null,0);
+        metadata.dayOfWeek = dayOfWeek
+      }
+
+      //
       // avoid webhook
       if(process.env.NODE_ENV=='test'){
         metadata.env="test";
       }
-
-      if(shipping) {
-        assert(shipping.price>=0);
-        assert(dayOfWeek>=0);
-        delete shipping['geo'];  
-        const item = {
-          id:'service',
-          title:'shipping',
-          price:shipping.price,
-          quantity:1        
-        }
-        const itemShipping = await findOrCreateItemService(item,interval, isInvoice)
-        items.push(itemShipping);
-    
-        //
-        // clean shipping
-        metadata.address = JSON.stringify(shipping,null,0);
-        metadata.dayOfWeek = dayOfWeek
-      }
-
-
 
 
       const description = "contrat:" + interval + ":"+ customer.uid;
@@ -793,6 +748,143 @@ export class SubscriptionContract {
     }
   }
 
+  //
+  // update the contract with  karibou cart items
+  // replaces the previous contract with the new items and price 
+  // https://stripe.com/docs/billing/subscriptions/upgrade-downgrade
+  async update(upItems, subscriptionOptions) {
+    const _method = 'updateContract'+upItems.length;
+    lock(_method);
+
+    const {shipping, dayOfWeek, fees} = subscriptionOptions;
+    assert(fees>=0)
+    
+    try{
+      
+      // 1. update all the contract
+
+      //
+      // validate fees range [0..1]
+      if((fees>1) || (fees <0)) {
+        throw new Error("Incorrect fees params");
+      }
+      // in case of shipping
+      if(shipping) {
+        assert(shipping.price>=0);
+        assert(dayOfWeek>=0);
+      }
+
+      //
+      // filter cartItems for services or products
+      const cartServices = upItems.filter(item => !item.sku);
+      let cartItems = upItems.filter(item => !!item.sku);
+
+      //
+      // check available items for update
+      if(!cartItems.length) {
+        cartItems = this.content.items;
+        cartItems.forEach(item => {
+          item.frequency=this.interval.frequency;
+          item.price=item.fees;
+        });
+      }
+
+      if(!shipping && cartItems.length){
+        throw new Error("Shipping address is mandatory with products");      
+      }
+
+      if (!cartServices.length && !cartItems.length) {
+        throw new Error("Missing items");            
+      }
+
+      //
+      // create stripe products
+      if(cartItems.some(item => (item.frequency!=this.interval.frequency||!(item.price>=0)))){
+        throw new Error("incorrect item format");
+      }
+
+      //
+      // prepare items for update
+      cartItems.forEach(item => {
+        const available = this.findOneItem(item.sku);
+        if(available) {
+          item.id = available.id;
+          item.product = available.price.product;  
+        }
+      })
+
+      //
+      // build items based on user cart
+      const itemsOptions = {
+        invoice:!!this.paymentCredit, 
+        interval:this.interval.frequency,
+        serviceFees:fees,
+        shipping
+      }
+
+      const {items, servicePrice, contractShipping } = await createContractItemsForShipping(this,cartServices, cartItems, itemsOptions);
+
+      const metadata = this._subscription.metadata;
+
+      (fees>=0) && (metadata.fees = fees);      
+      (dayOfWeek>=0) && (metadata.dayOfWeek = dayOfWeek);
+
+      //
+      // use clean shipping
+      if(contractShipping) {
+        metadata.address = JSON.stringify(contractShipping,null,0);
+      }
+
+      //
+      // remove previous service items
+      // items.id => Subscription item to update
+      // items.deleted => A flag that, if set to true, will delete the specified item.
+      // const deleted = this._subscription.items.data.filter(item => item.metadata.type=='service').map(item=> ({id:item.id,deleted:true}));
+
+      const options = {
+        items:items,
+        metadata,
+        expand : ['latest_invoice.payment_intent']
+      } as Stripe.SubscriptionUpdateParams;
+
+
+      let subscription = await $stripe.subscriptions.update(
+        unxor(this.id),
+        options
+      );
+      
+      const invoice = subscription.latest_invoice  as Stripe.Invoice;
+      const invoice_intent = invoice && invoice.payment_intent as Stripe.PaymentIntent;
+
+      if(invoice_intent ) {
+        //
+        // refused payment method trow an Error()
+        try{
+          const transaction = await $stripe.paymentIntents.confirm(invoice_intent.id);  
+          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
+          subscription.latest_invoice['payment_intent'] = transaction;
+          subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
+        }catch(err) { 
+          if (!err.payment_intent){
+            throw err;
+          }
+          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
+          subscription.latest_invoice['payment_intent'] = err.payment_intent;            
+        }
+      }
+       
+      this._subscription = subscription;
+      cache.set(this._subscription.id,this);
+      return this;
+    }catch(err){
+      throw parseError(err);
+    }finally{
+      unlock(_method);
+    }
+
+  }
+
+
   static clearCache(id) {
     // use the stripe id
     id = id.indexOf('sub_')>-1? id: unxor(id);
@@ -898,6 +990,118 @@ export class SubscriptionContract {
 }
 
 //
+// prepare items for shipping, service or others
+async function createContractItemsForShipping(contract, cartServices, cartItems, options) {
+    const isInvoice = options.invoice;
+
+    // check is subscription must be updated or created
+    for(let item of cartItems) {
+      if(item.product) {
+        continue;
+      }
+      item.product = await findOrCreateProductFromItem(item);
+    }
+    // group items by interval, day, week, month
+    const items = createItemsFromCart(cartItems,isInvoice);
+
+    //
+    // compute service serviceFees
+    const servicePrice = cartItems.filter(item => !item.deleted).reduce((sum, item) => {
+      return sum + (item.price * item.quantity * (options.serviceFees));
+    }, 0)
+
+    //
+    // create items for service fees and shipping
+    if(cartItems.length&&servicePrice>=0) {
+      const item = {
+        id:'service',
+        title:'karibou.ch',
+        price:round1cts(servicePrice),
+        quantity:1        
+      }
+
+      // check is subscription must be updated or created
+      let product, stripe_id;
+      if (contract){
+        const stripeItem = contract.findOneItem('service','karibou.ch');        
+        product = stripeItem.price.product;
+        stripe_id = stripeItem.id;
+      }
+
+      const itemService:any = await findOrCreateItemService(product,item,options.interval, isInvoice);
+      (stripe_id) && (itemService.id = stripe_id);
+      items.push(itemService);  
+    }
+    // check for delete item
+    else{
+      let product, stripe_id;
+      if (contract){
+        const stripeItem = contract.findOneItem('service','karibou.ch');        
+        stripe_id = stripeItem.id;
+      }
+      if(stripe_id){
+        const itemService:any = {id:stripe_id,deleted:true};
+        items.push(itemService);    
+      }
+    }
+
+    //
+    // create items for service only
+    if(cartServices.length) {
+      for(let elem of cartServices) {
+        const item = {
+          id:(elem.sku||elem.id),
+          title:elem.title,
+          price:elem.price,
+          quantity:elem.quantity        
+        }  
+
+        // check is subscription must be updated or created
+        let product, stripe_id;
+        if (contract){
+          const stripeItem = contract.findOneItem('service');        
+          product = stripeItem.price.product;
+          stripe_id = stripeItem.id;
+        }
+
+        const itemService:any = await findOrCreateItemService(product,item,options.interval, isInvoice);
+        (stripe_id) && (itemService.id = stripe_id);
+        (elem.deleted) && (itemService.deleted = true);
+        items.push(itemService);  
+      }
+
+    }  
+
+    //
+    // create shipping item
+    let contractShipping;
+    if(options.shipping) {
+      contractShipping = Object.assign({},options.shipping);
+      delete contractShipping['geo'];  
+      const item = {
+        id:'shipping',
+        title:'shipping',
+        price:contractShipping.price,
+        quantity:1        
+      }
+      // check is subscription must be updated or created
+      let product, stripe_id;
+      if (contract){
+        const stripeItem = contract.findOneItem('shipping');        
+        product = stripeItem.price.product;
+        stripe_id = stripeItem.id;
+      }
+
+
+      const itemShipping:any = await findOrCreateItemService(product,item,options.interval, isInvoice);
+      (stripe_id) && (itemShipping.id = stripe_id);
+      items.push(itemShipping);
+    }
+
+    return { items , servicePrice, contractShipping};
+}
+
+//
 // Stripe need to attach a valid product for a subscription
 async function findOrCreateProductFromItem(item) {
   const incache = cache.get(item.sku);
@@ -936,21 +1140,22 @@ function unlock(api) {
 }
 
 
-async function findOrCreateItemService(item, interval, isInvoice) {
+async function findOrCreateItemService(product,item, interval, isInvoice) {
   const { id,title,price, quantity } = item;
 
-
-  const products = await $stripe.products.search({
-    query:"active:'true' AND name:'"+id+"'", limit:1
-  })
-  let product;
-  if(products && products.data.length) {
-    product = products.data[0].id;
-  } else {
-    product = await $stripe.products.create({
-      name: id,
-      description:title
-    });  
+  // in case of update product is already known
+  if(!product) {
+    const products = await $stripe.products.search({
+      query:"active:'true' AND name:'"+id+"'", limit:1
+    })
+    if(products && products.data.length) {
+      product = products.data[0].id;
+    } else {
+      product = await $stripe.products.create({
+        name: id,
+        description:title
+      });  
+    }  
   }
 
 
@@ -1009,8 +1214,12 @@ function createItemsFromCart(cartItems, isInvoice) {
       metadata.variant = cartItems.variant; 
     }
 
-
-    return {metadata, quantity: item.quantity,price_data:instance};
+    //
+    // avoid duplicate in case of update
+    const resultItem:any = {metadata, quantity: item.quantity,price_data:instance};
+    (item.id) && (resultItem.id = item.id);
+    (item.deleted) && (resultItem.deleted = true);
+    return resultItem;
   }
 
   //
@@ -1025,6 +1234,7 @@ function createItemsFromCart(cartItems, isInvoice) {
 // parse subscription Item
 function parseItem(item: Stripe.SubscriptionItem): SubscriptionProductItem {
   const result:SubscriptionProductItem = {
+    id:item.id,
     unit_amount:item.price.unit_amount,
     currency:item.price.currency,
     quantity:(item.quantity),

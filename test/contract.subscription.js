@@ -6,6 +6,7 @@
  const config =require("../dist/config").default;
  const options = require('../config-test');
  config.configure(options.payment);
+ config.option('debug',false);
 
 
  const customer = require("../dist/customer");
@@ -17,7 +18,7 @@
  const $stripe = require("../dist/payments").$stripe;
  const should = require('should');
  const cartItems = require('./fixtures/cart.items');
-const { Webhook,WebhookContent } = require("../dist/webhook");
+ const { Webhook,WebhookContent } = require("../dist/webhook");
 
 
  //
