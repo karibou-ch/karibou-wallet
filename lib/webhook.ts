@@ -31,13 +31,18 @@ export class Webhook {
   * https://stripe.com/docs/webhooks
   * @returns {WebhookStripe } 
   */
-   static async stripe(body, sig):Promise<WebhookStripe> {
+   static async stripe(body, sig, mock?):Promise<WebhookStripe> {
 
     // 
     // body = request.data
     // sig = request.headers['STRIPE_SIGNATURE']
     let event = body;
     try{
+      //
+      // testing webhook controller
+      if(mock && mock.content) {
+        return Object.assign({},mock.content||{},{mock:true});
+      }
       const webhookSecret = Config.option('webhookSecret');
       event = $stripe.webhooks.constructEvent(body, sig, webhookSecret);
     }catch(err){
