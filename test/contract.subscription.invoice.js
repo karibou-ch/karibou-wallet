@@ -43,6 +43,7 @@ describe("contract.subscription.invoice", function(){
     postalCode: '1208',
     name: 'foo bar family',
     price: 5,
+    hours:16,
     lat:1,
     lng:2
   };
@@ -144,25 +145,15 @@ describe("contract.subscription.invoice", function(){
     }
   });
 
+  it("SubscriptionContract cancel", async function() {
+    defaultSub = await subscription.SubscriptionContract.get(defaultSub.id);
+    await defaultSub.cancel();
+  });
+
+
   it("list all SubscriptionContract for one customer", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
-    contracts.length.should.equal(1);
-    contracts.forEach(contract=> {
-      const content = contract.content;
-      console.log('\n     ------------------------------- ');
-      console.log('-- ',content.status,content.description, defaultCustomer.name);
-      console.log('-- ',content.frequency," ",content.dayOfWeek, content.start);
-      console.log('-- ',contract.shipping.name,contract.shipping.streetAdress,contract.shipping.postalCode);
-      console.log('-- articles ');
-      content.items.forEach(item=> {
-        console.log('   ',item.title,item.sku,item.quantity * (item.unit_amount/100), 'chf',item.quantity);
-      })
-      console.log('-- services ');
-      content.services.forEach(service=> {
-        console.log('   ',service.id,service.title, 'chf',service.fees);
-      })
-
-    });
+    contracts.length.should.equal(0);
 
   });
 

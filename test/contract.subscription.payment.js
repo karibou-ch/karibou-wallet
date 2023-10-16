@@ -44,6 +44,7 @@ describe("Class subscription.payment", function(){
     postalCode: '1208',
     name: 'foo bar family',
     price: 5,
+    hours:16,
     lat:1,
     lng:2
   };

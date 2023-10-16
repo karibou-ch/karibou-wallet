@@ -335,7 +335,7 @@ export class SubscriptionContract {
   async cancel(){
     // https://stripe.com/docs/billing/subscriptions/cancel?dashboard-or-api=api
     // cancel_at_period_end: true
-    this._subscription = await $stripe.subscriptions.update(
+    this._subscription = await $stripe.subscriptions.cancel(
       this._subscription.id,{ expand:['latest_invoice.payment_intent']}
     );
 
@@ -577,6 +577,7 @@ export class SubscriptionContract {
       // in case of shipping
       if(shipping) {
         assert(shipping.price>=0);
+        assert(shipping.hours>=0);
         assert(dayOfWeek>=0);
       }
 

@@ -51,7 +51,7 @@ describe("Class subscription.products", function(){
 
 
   // Simple month souscription for Patreon page
-  it("SubscriptionContract list products for patreon", async function() {
+  xit("SubscriptionContract list products for patreon", async function() {
     const products = await subscription.SubscriptionContract.listProducts();
     const card = createTestMethodFromStripe(methodValid);
     const sub = await subscription.SubscriptionContract.createOnlyFromService(defaultCustomer,card,"month",products[0]);

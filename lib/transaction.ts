@@ -334,8 +334,6 @@ export  class  Transaction {
         case "cash":
         case "balance":
         case "invoice":
-        //
-        // FIXME backport decodeAlias from the old api 
           const tx=unxor(payment.transaction.split('kng_')[1]).split('::');
           const oid = tx[0];
           const amount = parseFloat(tx[1]);

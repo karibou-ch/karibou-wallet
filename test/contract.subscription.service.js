@@ -42,6 +42,7 @@ describe("Class subscription for service only", function(){
     streetAdress: 'rue du rhone 69',
     postalCode: '1208',
     name: 'foo bar family',
+    hours:16,
     price: 5,
     lat:1,
     lng:2
