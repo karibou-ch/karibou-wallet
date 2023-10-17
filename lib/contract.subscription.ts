@@ -59,7 +59,7 @@ export interface SubscriptionAddress extends KngPaymentAddress {
 // subscription is available for product with shipping, and for service only
 export interface Subscription {
   id:string;
-  plan:"service"|"shipping"|"patreon"|string;
+  plan:"service"|"customer"|"business"|"patreon"|string;
   customer: string;// as karibou id
   description: string;
   start:Date;
@@ -416,7 +416,9 @@ export class SubscriptionContract {
   }
 
   async confirmPendingPayment(tid){
-    const transaction = await $stripe.paymentIntents.confirm(tid);
+    //
+    // use update instead confirm() throw err: You cannot confirm this PaymentIntent because it has already succeeded after being previously confirmed
+    await $stripe.paymentIntents.update(tid);
     this._subscription = await $stripe.subscriptions.retrieve((this._subscription.id),{expand:['latest_invoice.payment_intent']}) as any;
     cache.set(this._subscription.id,this);
     return this;
@@ -558,7 +560,7 @@ export class SubscriptionContract {
     // timestamp: must be an integer Unix timestamp [getTime()/1000]
     assert(start_from=='now' || (start_from && start_from.getTime()));
 
-    const {shipping, dayOfWeek, fees} = subscriptionOptions;
+    const {shipping, dayOfWeek, fees, plan} = subscriptionOptions;
     assert(fees>=0)
     const _method = 'create'+customer.id;
     lock(_method);
@@ -609,7 +611,7 @@ export class SubscriptionContract {
         shipping
       }
 
-      const {items, servicePrice, contractShipping } = await createContractItemsForShipping(null,cartServices, cartItems, itemsOptions);
+      const {items, contractShipping } = await createContractItemsForShipping(null,cartServices, cartItems, itemsOptions);
 
       //
       // be sure
@@ -618,7 +620,8 @@ export class SubscriptionContract {
       //
       // create metadata karibou model
       // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
-      const metadata:any = { uid:customer.uid, fees,plan:(cartItems.length)?'shipping':'service' };
+      const metadataPlan = plan ||((cartItems.length)?'customer':'service');
+      const metadata:any = { uid:customer.uid, fees,plan: metadataPlan};
 
       //
       // use clean shipping with price included

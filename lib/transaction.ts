@@ -358,7 +358,7 @@ export  class  Transaction {
   */
    static async confirm(paymentIntent:string) {
     const tid = (paymentIntent);
-    const transaction = await $stripe.paymentIntents.confirm(tid);
+    const transaction = await $stripe.paymentIntents.update(tid);
     assert(transaction.customer)
     return new Transaction(transaction);
    }
