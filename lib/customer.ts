@@ -5,8 +5,8 @@ import { $stripe, stripeParseError, crypto_randomToken, crypto_fingerprint, xor,
 import Config, { nonEnumerableProperties } from './config';
 
 //
-// using memory cache limited to 1000 customer in same time for 4h
-const cache = new (require("lru-cache").LRUCache)({ttl:1000 * 60 * 60 * 4,max:2000});
+// using memory cache limited to 1000 customer in same time for 24h
+const cache = new (require("lru-cache").LRUCache)({ttl:1000 * 60 * 60 * 24,max:2000});
 const locked = new (require("lru-cache").LRUCache)({ttl:3000,max:1000});
 
 export class Customer {
