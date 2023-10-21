@@ -1081,7 +1081,11 @@ async function createContractItemsForShipping(contract, cartServices, cartItems,
     let contractShipping;
     if(options.shipping) {
       contractShipping = Object.assign({},options.shipping);
-      delete contractShipping['geo'];  
+      if(contractShipping['geo']) {
+        contractShipping.lat = contractShipping.lat || contractShipping['geo'].lat;
+        contractShipping.lng = contractShipping.lng || contractShipping['geo'].lng;
+        delete contractShipping['geo'];  
+      }
       const item = {
         id:'shipping',
         title:'shipping',
