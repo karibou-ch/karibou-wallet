@@ -202,9 +202,12 @@ export class SubscriptionContract {
     // - Saturday for Tuesday (mar 2)
     // - Sunday for Wednesday (mer 3)
     // - Monday for Thusday (jeu 4)
+    // FIXME nextInvoice depends on pauseUntil and the dayOfWeek
     if(frequency == "week"){
       nextBilling.setDate(nextBilling.getDate() + 7);
     }
+
+
 
     //
     // month case next billing is always the same day
@@ -240,7 +243,7 @@ export class SubscriptionContract {
     if(this._subscription.metadata.address){
       result.dayOfWeek = (+this._subscription.metadata.dayOfWeek);
       result.shipping = this.shipping;
-      result.plan = "shipping";
+      result.plan = this._subscription.metadata.plan||"customer";
       result.fees = parseFloat(this._subscription.metadata.fees)
       result.items = this.items;
     }
