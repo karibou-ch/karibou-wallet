@@ -9,7 +9,7 @@ import { strict as assert } from 'assert';
 import Stripe from 'stripe';
 import Config from './config';
 import { Customer } from './customer';
-import { KngCard, $stripe, stripeParseError, unxor, xor, KngPayment, KngPaymentInvoice, KngPaymentStatus, KngOrderPayment, round1cts } from './payments';
+import { KngCard, $stripe, stripeParseError, unxor, xor, KngPayment, KngPaymentInvoice, KngPaymentStatus, KngOrderPayment, round1cts, round5cts } from './payments';
 
 
 export interface PaymentOptions {
@@ -450,14 +450,17 @@ export  class  Transaction {
         let creditAmount=0;
         let status="";
         //
-        // case of invoice or invoice_paid
+        // case of invoice or invoice_paid (use this.amount at this stage)
         if(['invoice_paid','invoice'].includes(this.status)){
 
           //
           // in this case the amount should equal the preivous captured amount
-          if(this.amount != normAmount/100) {
+          // FIXME github issue #117 (this.amount<(normAmount/100))
+          // console.log('----- DB capture',this.amount,'norm',normAmount/100);
+          if((this.amount)!=(normAmount/100)) {
             throw new Error("The payment could not be finalyzed because the paid amount is not equal to the value captured");
           }
+
 
           creditAmount = this.amount;
           status = "paid";
@@ -467,7 +470,7 @@ export  class  Transaction {
         else{
           //
           // capture can't exceed the initial locked amount 
-          if(this.amount<(normAmount/100)) {
+          if((this.amount)<(normAmount/100)) {
             throw new Error("The payment could not be captured because the requested capture amount is greater than the amount you can capture for this charge");
           }
 
