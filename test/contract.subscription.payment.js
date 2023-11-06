@@ -74,7 +74,7 @@ describe("Class subscription.payment", function(){
 
     method3ds = await $stripe.paymentMethods.create({
       type: 'card',card: {
-        number: '4000000000003063',exp_month: 12,exp_year: 2034,cvc: '314'}
+        number: '4000000000003220',exp_month: 12,exp_year: 2034,cvc: '314'}
       });
 
     await $stripe.paymentMethods.attach(method3ds.id,{customer:unxor(defaultCustomer.id)});
