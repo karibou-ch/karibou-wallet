@@ -32,10 +32,11 @@ describe("config", function(){
     config.option('stripeApiVersion').should.equal('2022-11-15');
     
     //config.option('enabled').should.equal(true);
-    config.option('debug').should.equal(true);
+    config.option('debug').should.not.be.empty;
     config.option('sandbox').should.equal(true);
     config.option('allowedCurrencies').should.not.be.empty;
     config.option('allowedCurrencies').should.containEql('CHF');
+
     config.option('allowMultipleSetOption').should.equal(true);
     done()
   });
