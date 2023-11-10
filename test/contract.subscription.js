@@ -35,7 +35,7 @@ describe("Class subscription", function(){
   let defaultTx;
 
   // start next week
-  let dateValidNow = new Date(Date.now() + 60000);
+  let dateValidNow = new Date();
   let dateValid7d = new Date(Date.now() + 86400000*7);
   let pausedUntil = new Date(Date.now() + 86400000*30);
  
@@ -111,6 +111,7 @@ describe("Class subscription", function(){
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
+    defaultSub.content.frequency.should.equal('week');
     defaultSub.content.status.should.equal("active");
     defaultSub.content.items[0].hub.should.equal('mocha');
     defaultSub.content.items[1].hub.should.equal('mocha');
@@ -130,6 +131,44 @@ describe("Class subscription", function(){
   });
 
   // Simple weekly souscription 
+  it("SubscriptionContract create 2weeks", async function() {
+
+    const fees = 0.06;
+    const dayOfWeek= 2; // tuesday
+    const items = cartItems.filter(item => item.frequency == "week");
+
+    const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+    const subOptions = { shipping,dayOfWeek,fees };
+
+    // IMPORTANT
+    // a contract with a valid date for X days has a success payment, 
+    // but  incomplete status until the first day 
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"2weeks",dateValidNow,items,subOptions)
+
+    defaultSub.should.property("id");
+    defaultSub.should.property("status");
+    defaultSub.should.property("shipping");
+    defaultSub.should.property("content");
+    defaultSub.content.status.should.equal("active");
+    defaultSub.content.items[0].hub.should.equal('mocha');
+    defaultSub.content.items[1].hub.should.equal('mocha');
+    defaultSub.content.items.length.should.equal(2);
+    defaultSub.content.services.length.should.equal(2);
+    defaultSub.content.frequency.should.equal('2weeks');
+
+    defaultSub.content.items.forEach(item => {
+      const elem = items.find(itm => itm.sku == item.sku);
+      elem.price.should.equal(item.fees);
+      item.unit_amount.should.equal(item.fees*100);
+    })
+
+    const oneDay = 24 * 60 * 60 * 1000;
+    const nextInvoice = defaultSub.content.nextInvoice;
+    Math.round((nextInvoice - dateValidNow)/oneDay).should.equal(14)
+
+  });
+
+  // Simple weekly souscription 
   it("SubscriptionContract create montly", async function() {
 
     const fees = 0.06;
@@ -144,6 +183,7 @@ describe("Class subscription", function(){
     defaultSub.should.property("status");
     defaultSub.should.property("shipping");
     defaultSub.should.property("content");
+    defaultSub.content.frequency.should.equal('month');
     defaultSub.content.status.should.equal("active");
     defaultSub.content.items.length.should.equal(1);
     defaultSub.content.items[0].hub.should.equal('mocha');
@@ -201,7 +241,7 @@ describe("Class subscription", function(){
 
   it("list all SubscriptionContract for one customer", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
-    contracts.length.should.equal(2);
+    contracts.length.should.equal(3);
 
     contracts.forEach(contract=> {
       const content = contract.content;

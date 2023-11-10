@@ -43,13 +43,8 @@ export enum SchedulerStatus {
 }
 
 
-export enum SchedulerItemFrequency {
-  RECURRENT_NONE      = 0,
-  RECURRENT_DAY       = "day",
-  RECURRENT_WEEK      = "week",
-  RECURRENT_2WEEKS    = "2weeks",
-  RECURRENT_MONTH     = "month"
-}
+export type SchedulerItemFrequency = 0|"day"|"week"|"2weeks"|"month"|string;
+
 
 export interface SubscriptionAddress extends KngPaymentAddress {
   price?:number;
@@ -77,14 +72,6 @@ export interface Subscription {
   items?: SubscriptionProductItem[];
 };
 
-export const subscriptionGetNextBillingMonth = (billing_cycle_anchor)=> {
-  const now = new Date();
-  if (now.getMonth() == 11) {
-      return new Date(now.getFullYear() + 1, 0, billing_cycle_anchor.getDate());
-  }
-
-  return new Date(now.getFullYear(), now.getMonth() + 1, billing_cycle_anchor.getDate());
-}
 
 export interface SubscriptionOptions {
   dayOfWeek?:number,
@@ -147,11 +134,51 @@ export class SubscriptionContract {
 
   get id () { return xor(this._subscription.id) }
   get interval () { 
+    const today = new Date();
+    const frequency = (this._interval=='week' && this._interval_count==2)? '2weeks':this._interval;
+
+    let anchor = new Date(this._subscription.billing_cycle_anchor * 1000);
+
+    let nextBilling = new Date();
+    if(anchor>nextBilling) {
+      nextBilling = anchor;
+    }
+
+
+    //
+    // week case next billing is always 3 days before the shipping
+    // - Saturday for Tuesday (mar 2)
+    // - Sunday for Wednesday (mer 3)
+    // - Monday for Thusday (jeu 4)
+    // FIXME nextInvoice depends on pauseUntil and the dayOfWeek
+    if(frequency == "week"){
+      nextBilling.setDate(nextBilling.getDate() + 7);
+    }
+
+    if(frequency == "2weeks"){
+      nextBilling.setDate(nextBilling.getDate() + 14);
+    }
+
+    //
+    // month case next billing is always the same day
+    if(frequency == "month"){
+      nextBilling = new Date(this.billing_cycle_anchor);
+      nextBilling.setMonth(nextBilling.getMonth()+1);
+    }
+
+    //
+    // if contract is paused
+    nextBilling = this.pausedUntil || nextBilling;
+    nextBilling.setHours(anchor.getHours());
+    nextBilling.setMinutes(anchor.getMinutes());
+
+
     return {
+      frequency,
       start:this.billing_cycle_anchor,
-      frequency: this._interval, 
       count:this._interval_count,
-      dayOfWeek: +this._subscription.metadata.dayOfWeek
+      dayOfWeek: +this._subscription.metadata.dayOfWeek,
+      nextBilling
     } 
   }
   
@@ -188,36 +215,8 @@ export class SubscriptionContract {
     } 
   }
   get content ():Subscription { 
-    const frequency = (this.interval.frequency.toString() as SchedulerItemFrequency)
-    const today = new Date();
+    const frequency = (this.interval.frequency)
 
-    let anchor = new Date(this._subscription.billing_cycle_anchor * 1000);
-    let nextBilling = new Date();//this._subscription.next_pending_invoice_item_invoice * 1000);
-    if(anchor>nextBilling) {
-      nextBilling = anchor;
-    }
-
-    //
-    // week case next billing is always 3 days before the shipping
-    // - Saturday for Tuesday (mar 2)
-    // - Sunday for Wednesday (mer 3)
-    // - Monday for Thusday (jeu 4)
-    // FIXME nextInvoice depends on pauseUntil and the dayOfWeek
-    if(frequency == "week"){
-      nextBilling.setDate(nextBilling.getDate() + 7);
-    }
-
-
-
-    //
-    // month case next billing is always the same day
-    if(frequency == "month"){
-      nextBilling = subscriptionGetNextBillingMonth(this.interval.start)
-    }
-
-    nextBilling.setHours(anchor.getHours());
-    nextBilling.setMinutes(anchor.getMinutes());
-    
     // 
     // subscription can have the simplest form without product items
     const description = (this._subscription.description)? this._subscription.description.toString():"";
@@ -226,8 +225,8 @@ export class SubscriptionContract {
       customer: this._subscription.metadata.uid,
       start:this.interval.start,
       pauseUntil: this.pausedUntil,
-      nextInvoice: nextBilling,
-      frequency:(this.interval.frequency.toString() as SchedulerItemFrequency),
+      nextInvoice: this.interval.nextBilling,
+      frequency,
       status:this.status,
       issue:this._subscription.status.toString(),
       patreon:this.patreonItems,
@@ -351,7 +350,7 @@ export class SubscriptionContract {
   // sub will pause on {from} Date ({from} billing must be aligned with the billing_cycle_anchor to avoid confusion)
   // sub will resume on {to} Date ({to} billing must be aligned 2-3 days before the dayOfWeek delivery) 
   // https://stripe.com/docs/billing/subscriptions/pause
-  async pause(to:Date) {
+  async pause(to:Date, from?:Date) {
     const metadata = this._subscription.metadata;
 
     // Stripe won’t send any upcoming invoice emails or webhooks for these invoices 
@@ -363,11 +362,13 @@ export class SubscriptionContract {
     // be sure (in frontend) that resume time is 2-3 days before the next shipping day
     if (to){
       if(!to.toDateString) throw new Error("resume date is incorrect");
-      metadata.to = to.getTime()+'';
       behavior.resumes_at=parseInt(to.getTime()/1000+'');
     }
-
-    metadata.from = Date.now()+'';
+    //
+    // get optional from
+    // FIXME we need planning for pause
+    // from = (from && from.getTime())? (from) : (new Date());
+    // metadata.from = from.getTime()+'';
 
     this._subscription = await $stripe.subscriptions.update(
       this._subscription.id,
@@ -432,7 +433,7 @@ export class SubscriptionContract {
   }
 
 
-  static async createOnlyFromService(customer:Customer, card:KngPaymentSource, interval:Interval,  product) {
+  static async createOnlyFromService(customer:Customer, card:KngPaymentSource, interval:SchedulerItemFrequency,  product) {
     const isInvoice = card.issuer == "invoice";
     const quantity = 1;
     const price = product.default_price.unit_amount;
@@ -454,11 +455,13 @@ export class SubscriptionContract {
       //
       // missing fees (see documentation for fees inclusion)
       // warning unit_amount is positive integer in cents 
+      const recurring = (interval=='2weeks')? ({interval:('week' as Interval),interval_count:2}):({interval:(interval as Interval),interval_count:1})
+
       const serviceItem:SubscriptionItem = { 
         currency : 'CHF', 
         unit_amount : isInvoice? 0:(price),
         product : product.id,
-        recurring : { interval, interval_count: 1 }
+        recurring
       };
       const itemMetadata = {
         type:"patreon",
@@ -489,8 +492,8 @@ export class SubscriptionContract {
         customer: unxor(customer.id),
         payment_behavior:'default_incomplete',
         off_session:false,
-        billing_cycle_anchor,
         description,
+        proration_behavior:'none',
         items,
         metadata 
       } as Stripe.SubscriptionCreateParams;
@@ -503,34 +506,43 @@ export class SubscriptionContract {
         options.payment_behavior = 'allow_incomplete';
         options.payment_settings = {}
       } else {
+        options.payment_behavior = 'default_incomplete';
+        options.payment_settings = { save_default_payment_method: 'on_subscription' };
         options.default_payment_method=unxor(card.id);
-        options.expand = ['pending_setup_intent','latest_invoice.payment_intent']
+        options.expand = ['latest_invoice.payment_intent']
       }
 
       //
       // https://stripe.com/docs/billing/testing
-      const subscription = await $stripe.subscriptions.create(options);  
-      const invoice = subscription.latest_invoice  as Stripe.Invoice;
+      let subscription = await $stripe.subscriptions.create(options);  
       
       //
-      // always confirm pending invoice
-      // this will update the latest_invoice ?
-      if(invoice && 
-          invoice.payment_intent ) {
-        const tid = invoice.payment_intent['id']||invoice.payment_intent;
+      // WRONG status pending setup_intent 
+      // const setup_intent = subscription.pending_setup_intent as Stripe.SetupIntent;
+
+      // if(setup_intent) {
+      //   const setupDone = await $stripe.setupIntents.confirm(setup_intent.id);
+      //   subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
+      // }
+      const invoice = subscription.latest_invoice  as Stripe.Invoice;
+      const invoice_intent = invoice && invoice.payment_intent as Stripe.PaymentIntent;
+
+      if(invoice_intent ) {
         //
         // refused payment method trow an Error()
         try{
-          const transaction = await $stripe.paymentIntents.confirm(tid);  
+          const transaction = await $stripe.paymentIntents.confirm(invoice_intent.id);  
+          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
           subscription.latest_invoice['payment_intent'] = transaction;
+          subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
         }catch(err) { 
           if (!err.payment_intent){
             throw err;
           }
+          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
           subscription.latest_invoice['payment_intent'] = err.payment_intent;            
         }
       }
-
       return new SubscriptionContract(subscription);  
     }catch(err){
       throw parseError(err);
@@ -543,7 +555,7 @@ export class SubscriptionContract {
   }
 
   //
-  // create one subscription by recurring interval (mobth, day, week)
+  // create one subscription by recurring interval (day, week, 2weeks, month)
   // https://stripe.com/docs/api/subscriptions
   //
   // - check status and content of subscription before to create a new one
@@ -557,7 +569,7 @@ export class SubscriptionContract {
   // - multiple subscription for 
   //   https://stripe.com/docs/billing/subscriptions/multiple-products#multiple-subscriptions-for-a-customer
   //   note: use the same billing_cycle_anchor for the same customer
-  static async create(customer:Customer, card:KngPaymentSource, interval:Interval, start_from,  cartItems, subscriptionOptions) {
+  static async create(customer:Customer, card:KngPaymentSource, interval:SchedulerItemFrequency, start_from,  cartItems, subscriptionOptions) {
     
     // check Date instance
     // timestamp: must be an integer Unix timestamp [getTime()/1000]
@@ -601,8 +613,8 @@ export class SubscriptionContract {
 
       //
       // create stripe products
-      if(cartItems.some(item => item.frequency!=interval)){
-        throw new Error("incorrect item format");
+      if(cartItems.some(item => !item.frequency)){
+        throw new Error("incorrect item format (L:601)");
       }
 
       //
@@ -703,7 +715,7 @@ export class SubscriptionContract {
       const now = Date.now();
       //
       // WRONG status pending setup_intent 
-      const setup_intent = subscription.pending_setup_intent as Stripe.SetupIntent;
+      // const setup_intent = subscription.pending_setup_intent as Stripe.SetupIntent;
 
       // if(setup_intent) {
       //   const setupDone = await $stripe.setupIntents.confirm(setup_intent.id);
@@ -1009,7 +1021,7 @@ async function createContractItemsForShipping(contract, cartServices, cartItems,
       item.product = await findOrCreateProductFromItem(item);
     }
     // group items by interval, day, week, month
-    const items = createItemsFromCart(cartItems,isInvoice);
+    const items = createItemsFromCart(cartItems,options.interval,isInvoice);
 
     //
     // compute service serviceFees
@@ -1173,11 +1185,12 @@ async function findOrCreateItemService(product,item, interval, isInvoice) {
   //
   // missing fees (see documentation for fees inclusion)
   // warning unit_amount is positive integer in cents 
+  const recurring = (interval=='2weeks')? ({interval:'week',interval_count:2}):({interval,interval_count:1})
   const serviceItem:SubscriptionItem = { 
     currency : 'CHF', 
     unit_amount : isInvoice? 0:(price*100)|0,
     product : product,
-    recurring : { interval, interval_count: 1 }
+    recurring
   };
   const metadata:SubscriptionMetaItem = {
     sku : id,
@@ -1193,23 +1206,22 @@ async function findOrCreateItemService(product,item, interval, isInvoice) {
 //
 // only for week or month subscription
 // day subscription is a special case
-function createItemsFromCart(cartItems, isInvoice) {
+function createItemsFromCart(cartItems, interval, isInvoice) {
   const itemCreation = (item ) => {
     const price = round1cts(item.price * 100);
 
     //
     // missing fees (see documentation for fees inclusion)
     // warning unit_amount is positive integer in cents 
+    const recurring = (interval=='2weeks')? ({interval:'week',interval_count:2}):({interval,interval_count:1})
     const instance:SubscriptionItem = { 
       currency : 'CHF', 
       unit_amount : (isInvoice ? 0:(price)),
       product : item.product,
-      recurring : { 
-        interval:item.frequency, 
-        interval_count: 1 
-      }
+      recurring
     };
 
+    //console.log('--- DBG recurring',instance.recurring);
     const metadata:SubscriptionMetaItem ={
       sku : item.sku,
       type:"product",
