@@ -925,7 +925,13 @@ export class SubscriptionContract {
     }
 
     try{
-      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent','payment_intent']}) as any;
+      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent']}) as any;
+
+      //
+      // expand payment_intent if needed
+      if(stripe.payment_intent && !stripe.payment_intent.id){
+        stripe.payment_intent = await $stripe.paymentIntents.retrieve(stripe.payment_intent); 
+      }
       const subscription = new SubscriptionContract(stripe); 
       return subscription;
     }catch(err) {
