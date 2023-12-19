@@ -187,7 +187,7 @@ export class SubscriptionContract {
   }
 
   get latestPaymentIntent() {
-    const invoice = this._subscription.latest_invoice as Stripe.Invoice;
+    const invoice = (this._subscription.latest_invoice || this._subscription) as Stripe.Invoice;
     if(!invoice.payment_intent) {
       return null;
     }
@@ -925,7 +925,7 @@ export class SubscriptionContract {
     }
 
     try{
-      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent']}) as any;
+      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent','payment_intent']}) as any;
       const subscription = new SubscriptionContract(stripe); 
       return subscription;
     }catch(err) {
@@ -1240,8 +1240,14 @@ function createItemsFromCart(cartItems, interval, isInvoice) {
     //
     // avoid duplicate in case of update
     const resultItem:any = {metadata, quantity: item.quantity,price_data:instance};
-    (item.id) && (resultItem.id = item.id);
-    (item.deleted) && (resultItem.deleted = true);
+    //
+    // case of delete or update
+    if(item.id){
+      resultItem.id = item.id;
+    }
+    if(item.id && item.deleted==true) {
+      resultItem.deleted = true;
+    }
     return resultItem;
   }
 
