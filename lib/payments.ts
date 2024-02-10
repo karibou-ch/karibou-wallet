@@ -27,15 +27,16 @@ export enum KngPaymentIssuer {
 
 
 
-export type KngPaymentStatus = "pending"
-													| "authorized"
-													| "partially_paid"
-													| "invoice"
-													| "invoice_paid"
-													| "paid"
-													| "partially_refunded"
-													| "refunded"
-													| "voided";
+export type KngPaymentStatus =  "pending"
+                              | "authorized"
+                              | "partially_paid"
+                              | "invoice"
+                              | "invoice_paid"
+                              | "paid"
+                              | "prepaid"
+                              | "partially_refunded"
+                              | "refunded"
+                              | "voided";
 
 export type KngPaymentExendedStatus = "refunded" | "prepaid" | "invoice";
 

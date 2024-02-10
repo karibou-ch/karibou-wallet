@@ -9,8 +9,10 @@ import { strict as assert } from 'assert';
 import Stripe from 'stripe';
 import Config from './config';
 import { Customer } from './customer';
-import { KngCard, $stripe, stripeParseError, unxor, xor, KngPayment, KngPaymentInvoice, KngPaymentStatus, KngOrderPayment, round1cts, round5cts } from './payments';
+import { KngCard, $stripe, stripeParseError, unxor, xor, KngPayment, KngPaymentInvoice, KngPaymentStatus, KngOrderPayment, round1cts } from './payments';
+import { LRUCache } from 'lru-cache';
 
+const locked = new LRUCache({ttl:6000,max:1000});
 
 export interface PaymentOptions {
   charge?:boolean;
@@ -29,6 +31,22 @@ export  class  Transaction {
   private _payment:Stripe.PaymentIntent|KngPaymentInvoice;
   private _refund:Stripe.Refund;
   private _report:any;
+
+  // 
+  // avoid reentrency
+  private lock(api,root?){
+    root = root||this._payment.id;
+    const islocked = locked.get(root+api)
+    if (islocked){
+      throw new Error("reentrancy detection");
+    }
+    locked.set(root+api,true);
+  }
+
+  private unlock(api,root?) {
+    root = root||this._payment.id;
+    locked.delete(root+api);
+  }
 
 
   /**
@@ -366,11 +384,11 @@ export  class  Transaction {
   //
   // update status when transaction (capture_method) is automatic
   // prepaid is an eq of paid  
-  async updateStatusPrepaid() {    
+  async updateStatusPrepaidFor(oid) {    
     const metadata = this._payment.metadata;
     metadata.exended_status = 'prepaid';
+    metadata.order = oid;
     this._payment = await $stripe.paymentIntents.update(this._payment.id, {metadata});  
-
   }
 
   /**
@@ -379,7 +397,6 @@ export  class  Transaction {
   * @returns {any} Promise which return the charge object or a rejected Promise
   */
   async capture(amount:number) {
-
     if (amount == undefined || amount < 0){
       throw (new Error("Transaction need a null or positive amount to proceed"));
     }
@@ -432,8 +449,10 @@ export  class  Transaction {
     const customer_credit = parseInt(this._payment.metadata.customer_credit||"0") / 100;
 		const normAmount = Math.round(Math.max(1,amount-customer_credit)*100);
 
+    const _method = 'capture';
     try{
-
+      this.lock(_method);
+  
       //
       // case of customer credit
       if(this.provider=='invoice') {
@@ -492,24 +511,22 @@ export  class  Transaction {
       }
 
       //
-      // CASH BALANCE
+      // CASH BALANCE or PREPAID on subscription
       if(this.status == "prepaid" as KngPaymentStatus) {
-
-        if(normAmount == this._payment.amount) {
+        // FIXME 1cts round issue 
+        const amountDiff = Math.abs(normAmount-this._payment.amount);
+        if(amountDiff < 2) {
           this._payment.metadata.exended_status = null;
           this._payment = await $stripe.paymentIntents.update( this._payment.id , { 
             metadata:this._payment.metadata
           });  
-
         } 
         //
         // for cashbalance total amount is not the same 
         // normAmount remove the amount paid from customer credit
-      else {
+        else {
           await this.refund(normAmount/100);  
         }
-
-
       } 
       //
       // case of KngCard
@@ -539,8 +556,6 @@ export  class  Transaction {
         }
 
       }
-
-
       return this;
     }catch(err) {
 
@@ -572,6 +587,8 @@ export  class  Transaction {
 
 			this._payment = await _force_recapture(amount);
       return this;
+    }finally{
+      this.unlock(_method);
     }
 
   }
@@ -586,17 +603,31 @@ export  class  Transaction {
     }
 
     try{
+      if(this.status == "prepaid" as KngPaymentStatus) {
+        return await this.refund();
+      }
+
       // keep stripe id in scope
       const stripe_id = this._payment.id;
 
-      // credit amount already paid with this transaction      
-      const customer_credit = parseInt(this._payment.metadata.customer_credit||"0") / 100;
-      if(customer_credit>0){
+      // 
+      // invoice 
+      if(this.provider == "invoice"){
         const customer = await Customer.get(this.customer);
-        await customer.updateCredit(customer_credit,'cancel:'+this.oid);                
-        this._payment = createOrderPayment(this.customer,this.amount*100,this.refunded*100,"canceled",this.oid);
+        await customer.updateCredit(this.amount,'cancel:'+this.oid);                
+        this._payment = createOrderPayment(this.customer,this.amount*100,this.refunded*100,"canceled",this.oid, this._payment.metadata);
+        // metadata are not saved ?
       }
-      if(this.provider == "stripe"){
+      else if(this.provider == "stripe"){
+        // Case of mixed amount
+        // credit amount already paid with this transaction      
+        const customer_credit = parseInt(this._payment.metadata.customer_credit||"0") / 100;
+        if(customer_credit>0) {
+          const customer = await Customer.get(this.customer);
+          await customer.updateCredit(customer_credit,'cancel:'+this.oid);                
+        }
+        
+        const metadata = this._payment.metadata
         this._payment = await $stripe.paymentIntents.cancel(stripe_id);
       }
       return this;  
@@ -642,8 +673,9 @@ export  class  Transaction {
 
     // keep stripe id in scope
     const stripe_id = this._payment.id;
+    const _method = 'refund';
     try{
-
+      this.lock(_method);
 
       //
       // credit amount already paid with this transaction
@@ -741,14 +773,17 @@ export  class  Transaction {
   
     }catch(err) {
       throw parseError(err);
-    }  
+    }finally{
+      this.unlock(_method);
+    }
   }
 
 }
 
-function createOrderPayment(customer_id,amount,refund,status,oid) {
+function createOrderPayment(customer_id,amount,refund,status,oid, metadata?) {
   //
   // transaction id string format: order_id::amount::customer_id
+  metadata = Object.assign(metadata||{},{order:oid,refund:refund});
   const transaction:KngPaymentInvoice = {
     amount:amount,
     client_secret:xor(oid),
@@ -756,7 +791,7 @@ function createOrderPayment(customer_id,amount,refund,status,oid) {
     currency:'CHF',
     customer:customer_id,
     description:"#"+oid,
-    metadata: {order:oid,refund:refund},
+    metadata,
     id:'kng_'+xor(oid+'::'+(amount)+'::'+(refund||0)+'::'+customer_id),
     payment_method:'invoice',
     status:status,
