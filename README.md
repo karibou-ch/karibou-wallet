@@ -37,7 +37,7 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [X] pause and resume
   * [X] build and sent invoices
   * [X] manage SCA and other F**ING security scheme
-  * [ ] update contract items (add/update or remove specifics items)
+  * [X] update contract items (add/update or remove specifics items)
 * [x] Initial Customer management to protect sensitives data
   * [x] sensitives data are decoupled from karibou
   * [ ] email, phone 
@@ -50,8 +50,11 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [ ] verify from sms (OTP)
   * [ ] verify from public key (web3/btc)
 * [x] Initial transfer monney via COUPON 
-  * [X] coupon can be load in customer wallet
-  * [ ] coupon is limited to a vendor
+  * [X] coupon can be used from customer wallet
+  * [ ] coupon is limited for a vendor
+  * [ ] coupon is limited for a product
+  * [ ] coupon is limited with a timeframe
+
 
 
 ## Prerequisites
