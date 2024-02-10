@@ -16,7 +16,7 @@ En tant que soutien, vous bénéficierez de nombreux avantages, notamment :
 
 Rejoignez sans plus tarder notre communauté de soutiens sur Karibou.ch et participez à l'évolution de ce projet !
 
-<a href="mailto:hello@karibou.ch?subject=En attendant la page de soutient karibou.ch">Devenir un Soutien Karibou.ch</a>
+[Soutenir les developpements de Karibou.ch](https://karibou.ch/store/artamis/home/patreon/welcome)
 
 
 
