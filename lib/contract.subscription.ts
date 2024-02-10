@@ -463,9 +463,14 @@ export class SubscriptionContract {
         product : product.id,
         recurring
       };
+      
+      //
+      // use custom title
+      const title = product.metadata.title || product.name;
+
       const itemMetadata = {
         type:"patreon",
-        title: product.name,
+        title,
         quantity,
       }
 

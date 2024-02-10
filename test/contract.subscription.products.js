@@ -62,7 +62,7 @@ describe("Class subscription.products", function(){
     sub.content.plan.should.equal('patreon');
     sub.content.patreon.length.should.equal(1);
     sub.content.patreon[0].unit_amount.should.equal(products[0].default_price.unit_amount);
-    sub.content.patreon[0].id.should.equal(products[0].name);
+    sub.content.patreon[0].id.should.equal(products[0].metadata.title);//Le Premium Double Expresso
 
 
     // WARNING: You can only filter subscriptions by prices for recurring purchases
