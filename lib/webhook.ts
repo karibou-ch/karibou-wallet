@@ -180,11 +180,11 @@ export class Webhook {
         // } 
         //
         // case of stripe
-        if(contract.content.latestPaymentIntent){
+        if(invoice.payment_intent) {
+          transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        }
+        else if(contract.content.latestPaymentIntent){
           transaction = await Transaction.get(xor(contract.content.latestPaymentIntent.id));
-          //
-          // use  PREPAID for active order on workflow
-          await transaction.updateStatusPrepaid();
         }
 
         const customer = await contract.customer();
