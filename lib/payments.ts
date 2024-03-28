@@ -280,7 +280,7 @@ export function stripeParseError(err) {
 	// https://stripe.com/docs/error-codes
 	const declineMessage={
 		approve_with_id : "The payment cannot be authorized",
-    authentication_required: "The card requires code confirmation",
+    	authentication_required: "The card requires code confirmation",
 		call_issuer : "The card has been declined :-( Please contact your bank for more information",
 		card_not_supported : "The card does not support this type of purchase",
 		card_velocity_exceeded : "The customer has exceeded the balance or credit limit available on their card",
@@ -320,7 +320,7 @@ export function stripeParseError(err) {
 		stop_payment_order : "The card has been declined for an unknown reason",
 		testmode_decline : "A Stripe test card number was used",
 		transaction_not_allowed : "The card has been declined for an unknown reason",
-		try_again_later : "The card has been declined for an unknown reason",
+		try_again_later : "The card was declined without reason. The 3D-Secure service is initially inactive with some banks, such as Postfinance.",
 		withdrawal_count_limit_exceeded : "The customer has exceeded the balance or credit limit available on their card"
 	};
 
@@ -365,11 +365,16 @@ export function stripeParseError(err) {
 		stop_payment_order : "The card has been declined for an unknown reason",
 		testmode_decline : "A Stripe test card number was used",
 		transaction_not_allowed : "The card has been declined for an unknown reason",
-		try_again_later : "The card has been declined for an unknown reason",
+		try_again_later : "La carte a été déclinée sans raison. Le service 3D-Secure est initialement  inactif avec certaine banque comme Postfinance.",
 		withdrawal_count_limit_exceeded : "Le client a dépassé le solde ou la limite de crédit disponible sur sa carte"
 	};
 
-	// console.log('---DBG error code',err.type,err.decline_code)
+	//
+	// verify the error outome :
+	// - reason : card_velocity_exceeded
+	// - reason : previously_declined_do_not_retry
+	// - seller_message: "You previously attempted to charge this card. When the customer's bank declined that payment, it directed Stripe to block future attempts."
+	console.log('---DBG error code',err.type,err.decline_code, err.outcome)
 	switch (err.type) {
 	  case 'StripeCardError':
 			// A declined card error
