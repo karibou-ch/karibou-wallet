@@ -186,7 +186,7 @@ describe("Class transaction.stripe", function(){
 
     let tx = await transaction.Transaction.authorize(defaultCustomer,card,2,paymentOpts)
     await tx.capture(0);
-    tx.status.should.equal('canceled');
+    tx.status.should.equal('voided');
     tx.amount.should.equal(0);
   });
 

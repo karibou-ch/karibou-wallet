@@ -30,7 +30,6 @@ export interface PaymentOptions {
 export  class  Transaction {
   private _payment:Stripe.PaymentIntent|KngPaymentInvoice;
   private _refund:Stripe.Refund;
-  private _report:any;
 
   // 
   // avoid reentrency
@@ -38,14 +37,17 @@ export  class  Transaction {
     root = root||this._payment.id;
     const islocked = locked.get(root+api)
     if (islocked){
-      throw new Error("reentrancy detection");
+      throw new Error("reentrancy detection: "+root+api);
     }
     locked.set(root+api,true);
+    Config.option('debug') && console.log('--- lock',root,api);
   }
 
   private unlock(api,root?) {
     root = root||this._payment.id;
+    locked.set(root+api,false);
     locked.delete(root+api);
+    Config.option('debug') &&  console.log('    unlock',root,api);
   }
 
 
@@ -56,7 +58,6 @@ export  class  Transaction {
   private constructor(payment:Stripe.PaymentIntent|KngPaymentInvoice, refund?:Stripe.Refund) {    
     this._payment = payment;
     this._refund = refund || {} as Stripe.Refund;
-    this._report = {};
   }
 
   get id():string{
@@ -91,7 +92,8 @@ export  class  Transaction {
 
     const status = {
       "processing":"pending",
-      "succeeded":"paid"
+      "succeeded":"paid",
+      "canceled":"voided"
     }
     return (this._payment.metadata.exended_status || status[this._payment.status] ||this._payment.status) as KngPaymentStatus;
   }
@@ -147,7 +149,7 @@ export  class  Transaction {
     return ["succeeded","paid","invoice","invoice_paid","refunded","partially_refunded","manually_refunded"].includes(this.status);
   }
   get canceled():boolean{
-    return this.status == "canceled" as KngPaymentStatus;
+    return this.status == "voided" as KngPaymentStatus;
   }
 
   get refunded():number{
@@ -449,9 +451,12 @@ export  class  Transaction {
     const customer_credit = parseInt(this._payment.metadata.customer_credit||"0") / 100;
 		const normAmount = Math.round(Math.max(1,amount-customer_credit)*100);
 
+    //
+    //  tx id ca change !
+    const _method_root = this._payment.id;
     const _method = 'capture';
     try{
-      this.lock(_method);
+      this.lock(_method,_method_root);
   
       //
       // case of customer credit
@@ -511,11 +516,14 @@ export  class  Transaction {
       }
 
       //
-      // CASH BALANCE or PREPAID on subscription
+      // CASH BALANCE or PREPAID when subscription
       if(this.status == "prepaid" as KngPaymentStatus) {
-        // FIXME 1cts round issue 
-        const amountDiff = Math.abs(normAmount-this._payment.amount);
-        if(amountDiff < 2) {
+        const refundAmount = (this._payment.amount-normAmount);
+        // FIXME 1cts round issue between initial amount and capture amount
+        if(refundAmount < -1) {
+          throw new Error("The payment could not be captured because the requested capture amount is greater than the amount you can capture for this charge");
+        }
+        if(refundAmount < 2) {
           this._payment.metadata.exended_status = null;
           this._payment = await $stripe.paymentIntents.update( this._payment.id , { 
             metadata:this._payment.metadata
@@ -524,8 +532,10 @@ export  class  Transaction {
         //
         // for cashbalance total amount is not the same 
         // normAmount remove the amount paid from customer credit
+        // FIXME missing  for capture last_amount ==   refund(initial_amount - last_amount)
+        // 
         else {
-          await this.refund(normAmount/100);  
+          await this.refund(refundAmount/100);  
         }
       } 
       //
@@ -588,7 +598,7 @@ export  class  Transaction {
 			this._payment = await _force_recapture(amount);
       return this;
     }finally{
-      this.unlock(_method);
+      this.unlock(_method,_method_root);
     }
 
   }
@@ -615,7 +625,7 @@ export  class  Transaction {
       if(this.provider == "invoice"){
         const customer = await Customer.get(this.customer);
         await customer.updateCredit(this.amount,'cancel:'+this.oid);                
-        this._payment = createOrderPayment(this.customer,this.amount*100,this.refunded*100,"canceled",this.oid, this._payment.metadata);
+        this._payment = createOrderPayment(this.customer,this.amount*100,this.refunded*100,"voided",this.oid, this._payment.metadata);
         // metadata are not saved ?
       }
       else if(this.provider == "stripe"){
@@ -675,7 +685,7 @@ export  class  Transaction {
     const stripe_id = this._payment.id;
     const _method = 'refund';
     try{
-      this.lock(_method);
+      this.lock(_method,stripe_id);
 
       //
       // credit amount already paid with this transaction
@@ -774,7 +784,7 @@ export  class  Transaction {
     }catch(err) {
       throw parseError(err);
     }finally{
-      this.unlock(_method);
+      this.unlock(_method,stripe_id);
     }
   }
 

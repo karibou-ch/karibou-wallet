@@ -108,7 +108,7 @@ describe("Class transaction.stripe.charge", function(){
     should.exist(tx.report.log);
     should.exist(tx.report.transaction);
 
-    await tx.updateStatusPrepaidFor('123');
+    await tx.updateStatusPrepaidFor('01234');
     // console.log('---- DBG report amount_capturable',tx._payment.amount_capturable);
     // console.log('---- DBG report amount_received',tx._payment.amount_received);
 
@@ -137,7 +137,8 @@ describe("Class transaction.stripe.charge", function(){
       await tx.capture(2.02);
       should.not.exist("dead zone");
     }catch(err) {
-      err.message.should.containEql('he refund has exceeded the amount available');
+      err.message.should.containEql("the requested capture amount is greater");
+      //err.message.should.containEql('he refund has exceeded the amount available');
     }
   });
 
