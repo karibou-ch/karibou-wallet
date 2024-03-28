@@ -57,6 +57,7 @@ export interface Subscription {
   plan:"service"|"customer"|"business"|"patreon"|string;
   customer: string;// as karibou id
   description: string;
+  note:string;
   start:Date;
   nextInvoice:Date;
   pauseUntil: Date|0;
@@ -223,6 +224,7 @@ export class SubscriptionContract {
     const result:Subscription = {
       id: (this.id),
       customer: this._subscription.metadata.uid,
+      note: this._subscription.metadata.note||'',
       start:this.interval.start,
       pauseUntil: this.pausedUntil,
       nextInvoice: this.interval.nextBilling,
@@ -864,10 +866,11 @@ export class SubscriptionContract {
       // items.id => Subscription item to update
       // items.deleted => A flag that, if set to true, will delete the specified item.
       // const deleted = this._subscription.items.data.filter(item => item.metadata.type=='service').map(item=> ({id:item.id,deleted:true}));
-
+      // proration_behavior = 'none', remove => La tarification au prorata 
       const options = {
         items:items,
         metadata,
+        proration_behavior:'none',
         expand : ['latest_invoice.payment_intent']
       } as Stripe.SubscriptionUpdateParams;
 
