@@ -48,13 +48,13 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [ ] verify from email/password
   * [ ] verify from inbox email (OTP)
   * [ ] verify from sms (OTP)
-  * [ ] verify from public key (web3/btc) (⇾ [core web3 api](https://github.com/evaletolab/kng-web3))
+  * [ ] verify from public key (web3/btc) (⇾ [our core web3 api](https://github.com/evaletolab/kng-web3))
 * [x] Initial transfer monney via COUPON 
   * [X] coupon can be used from customer wallet
   * [ ] coupon is limited for a vendor
   * [ ] coupon is limited for a product
   * [ ] coupon is limited with a timeframe
-* [ ] Analyse the (online or onshop) payment with xCHF (⇾ [core web3 api](https://github.com/evaletolab/kng-web3))
+* [ ] Analyse the (online or onshop) payment with xCHF (⇾ [our core web3 api](https://github.com/evaletolab/kng-web3))
 
 
 ## Prerequisites
