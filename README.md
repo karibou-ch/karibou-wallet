@@ -38,23 +38,23 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [X] build and sent invoices
   * [X] manage SCA and other F**ING security scheme
   * [X] update contract items (add/update or remove specifics items)
-* [x] Initial Customer management to protect sensitives data
+* [x] Initial Customer management to protect sensitives data (**decoupling from karibou**)
   * [x] sensitives data are decoupled from karibou
   * [ ] email, phone 
   * [x] fname, lname
   * [ ] addresses
   * [x] payment methods
-* [ ] Advanced signin verification (Identity)  (**TODO**)
+* [ ] Advanced signin verification (**Identity decoupled from karibou**)  (**TODO**)
   * [ ] verify from email/password
   * [ ] verify from inbox email (OTP)
   * [ ] verify from sms (OTP)
-  * [ ] verify from public key (web3/btc)
+  * [ ] verify from public key (web3/btc) (⇾ [initial web3 api]([url](https://github.com/evaletolab/kng-web3)))
 * [x] Initial transfer monney via COUPON 
   * [X] coupon can be used from customer wallet
   * [ ] coupon is limited for a vendor
   * [ ] coupon is limited for a product
   * [ ] coupon is limited with a timeframe
-
+* [ ] Analyse the (online or onshop) payment with xCHF (⇾ [initial web3 api]([url](https://github.com/evaletolab/kng-web3)))
 
 
 ## Prerequisites
