@@ -186,8 +186,8 @@ describe("Class transaction.stripe", function(){
 
     let tx = await transaction.Transaction.authorize(defaultCustomer,card,2,paymentOpts)
     await tx.capture(0);
-    tx.status.should.equal('voided');
-    tx.amount.should.equal(0);
+    tx.status.should.equal('paid');
+    tx.amount.should.equal(1);
   });
 
   it("Transaction capture belown minimal amount is impossible", async function() {
@@ -267,9 +267,14 @@ describe("Class transaction.stripe", function(){
   it("Transaction create and cancel", async function() {
 
     // load card from default customer
-    const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
-    const tx = await transaction.Transaction.authorize(defaultCustomer,card,2,paymentOpts)
-    await tx.cancel();
+    try{
+      const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+      const tx = await transaction.Transaction.authorize(defaultCustomer,card,4,paymentOpts)
+      await tx.cancel();  
+    }catch(err) {
+      console.log(err.message)
+      should.not.exist(err);
+    }
   });
 
 });

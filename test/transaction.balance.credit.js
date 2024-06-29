@@ -43,9 +43,10 @@ describe("Class transaction with negative customer credit", function(){
     await $stripe.customers.del(unxor(defaultCustomer.id));
   });
 
-  it("Create customer without credit balance", async function(){
+  it("Create customer with a small credit balance of 2 fr", async function(){
     config.option('debug',false);
     defaultCustomer = await customer.Customer.create("test@email.com","Foo","Bar","022345",1234);
+    // await defaultCustomer.updateCredit(2);
 
   });
 
@@ -63,20 +64,21 @@ describe("Class transaction with negative customer credit", function(){
     config.option('debug',false);
     defaultCustomer = await customer.Customer.get(defaultCustomer.id);
 
-
     // 
     // testing negative credit
     const card = await defaultCustomer.allowCredit(true);
 
     should.exist(card);
     should.exist(card.alias);
+    // defaultCustomer.balance.should.equal(2);
+
     defaultPaymentAlias = card.alias;
   });
 
 
   it("Transaction create with exceeded credit limit throw an error", async function() {
     try{
-      const tx = await transaction.Transaction.authorize(defaultCustomer,default_card_invoice,40.1,paymentOpts)
+      const tx = await transaction.Transaction.authorize(defaultCustomer,default_card_invoice,42.1,paymentOpts)
       should.not.exist("dead zone");
     }catch(err) {
       err.message.should.containEql('Vous avez atteind la limite de crédit')
@@ -104,7 +106,6 @@ describe("Class transaction with negative customer credit", function(){
     should.exist(tx.report.transaction);
     defaultTX = tx;
   });  
-
 
   it("invoice Transaction load from Order", async function() {
     const orderPayment = {
@@ -160,7 +161,6 @@ describe("Class transaction with negative customer credit", function(){
     }
   });  
 
-
   it("invoice Transaction refund before capture or cancel throws an error", async function() {
     try{
       // KngOrderPayment
@@ -178,19 +178,20 @@ describe("Class transaction with negative customer credit", function(){
     }
   });  
 
-
   it("invoice Transaction capture partial create a bill of partial amount 4 of 10", async function() {
     const orderPayment = {
       status:defaultTX.status,
       transaction:defaultTX.id,
       issuer:defaultTX.provider
     }
+    // authqorize 10.05!
+    defaultCustomer.balance.should.equal(-10.05);
     const tx = await transaction.Transaction.fromOrder(orderPayment);
     defaultTX = await tx.capture(4.01);
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("invoice");
     defaultTX.amount.should.equal(4.01);
-    defaultTX.refunded.should.equal(6.04);
+    defaultTX.customerCredit.should.equal(4.01);
 
     const cust = await customer.Customer.get(tx.customer);
     cust.balance.should.equal(-4.01);
@@ -207,11 +208,10 @@ describe("Class transaction with negative customer credit", function(){
       const tx = await transaction.Transaction.fromOrder(orderPayment);
       defaultTX = await tx.capture(4.02);
     }catch(err){
-      err.message.should.containEql('because the paid amount is not equal to the value captured');
+      err.message.should.containEql('capture amount is greater than the');
     }
 
   });
-
 
   it("invoice Transaction paid bill of captured amount 4 chf", async function() {
     const orderPayment = {
@@ -224,12 +224,11 @@ describe("Class transaction with negative customer credit", function(){
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("paid");
     defaultTX.amount.should.equal(4.01);
-    defaultTX.refunded.should.equal(6.04);
+    defaultTX.customerCredit.should.equal(4.01);
 
     const cust = await customer.Customer.get(tx.customer);
-    cust.balance.should.equal(0);
+    cust.balance.should.equal(-4.01);
   });
-
 
   it("invoice Transaction refund amount too large throw an error", async function() {
     try{
@@ -257,10 +256,12 @@ describe("Class transaction with negative customer credit", function(){
     defaultTX = await tx.refund(1.0);
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("refunded");
-    defaultTX.amount.should.equal(3.01);
-    defaultTX.refunded.should.equal(7.04);
-  });  
+    defaultTX.amount.should.equal(4.01);
+    defaultTX.refunded.should.equal(1);
+    const cust = await customer.Customer.get(tx.customer);
+    cust.balance.should.equal(-3.01);
 
+  });  
 
   it("invoice Transaction refund amount too large between refunds throw an error", async function() {
     try{
@@ -289,8 +290,8 @@ describe("Class transaction with negative customer credit", function(){
     defaultTX = await tx.refund();
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("refunded");
-    defaultTX.amount.should.equal(0);
-    defaultTX.refunded.should.equal(10.05);
+    defaultTX.amount.should.equal(4.01);
+    defaultTX.refunded.should.equal(4.01);
   });  
 
   it("invoice Transaction refund amount when amount eql 0 throw an error", async function() {
@@ -323,9 +324,7 @@ describe("Class transaction with negative customer credit", function(){
     }catch(err){
       err.message.should.containEql('Impossible to cancel captured transaction');
     }
-  });  
-  
-    
+  });      
 
   it("Transaction user with credit available can create TX with his mastercard ", async function() {
     const tx = await transaction.Transaction.authorize(defaultCustomer,card_mastercard_prepaid,40.1,paymentOpts)

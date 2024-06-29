@@ -19,7 +19,7 @@
  const should = require('should');
 
 
-describe("Class transaction.stripe.charge", function(){
+describe("Class transaction.stripe.charge (prepaid)", function(){
   this.timeout(8000);
 
   let defaultCustomer;
@@ -137,7 +137,7 @@ describe("Class transaction.stripe.charge", function(){
       await tx.capture(2.02);
       should.not.exist("dead zone");
     }catch(err) {
-      err.message.should.containEql("the requested capture amount is greater");
+      err.message.should.containEql("he requested capture amount is greater");
       //err.message.should.containEql('he refund has exceeded the amount available');
     }
   });

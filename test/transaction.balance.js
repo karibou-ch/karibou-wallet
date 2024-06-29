@@ -174,7 +174,8 @@ describe("Class transaction with customer debit", function(){
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("paid");
     defaultTX.amount.should.equal(4);
-    defaultTX.refunded.should.equal(6);
+    defaultTX.customerCredit.should.equal(4);
+    defaultTX.refunded.should.equal(0);
   });
 
   it("invoice Transaction refund amount too large throw an error", async function() {
@@ -203,8 +204,8 @@ describe("Class transaction with customer debit", function(){
     defaultTX = await tx.refund(1.0);
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("refunded");
-    defaultTX.amount.should.equal(3);
-    defaultTX.refunded.should.equal(7);
+    defaultTX.amount.should.equal(4);
+    defaultTX.refunded.should.equal(1);
   });  
 
 
@@ -235,8 +236,8 @@ describe("Class transaction with customer debit", function(){
     defaultTX = await tx.refund();
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("refunded");
-    defaultTX.amount.should.equal(0);
-    defaultTX.refunded.should.equal(10);
+    defaultTX.amount.should.equal(4);
+    defaultTX.refunded.should.equal(4);
   });  
 
   it("invoice Transaction refund amount when amount eql 0 throw an error", async function() {

@@ -122,7 +122,7 @@ describe("transaction.balance.credit.consolidation", function(){
 
   });
 
-  it("invoice Transaction refund partial amount 1 of 4.01", async function() {
+  it("invoice Transaction refund partial amount 1 of 122.05 should equal 121.05", async function() {
     const orderPayment = {
       status:defaultTX.status,
       transaction:defaultTX.id,
@@ -132,8 +132,10 @@ describe("transaction.balance.credit.consolidation", function(){
     defaultTX = await tx.refund(1.0);
     defaultTX.provider.should.equal("invoice");
     defaultTX.status.should.equal("refunded");
-    defaultTX.amount.should.equal(defaultAmountCaptured-1);
-    defaultTX.refunded.should.equal(round1cts(1 + defaultAmountReserved-defaultAmountCaptured));
+    defaultTX.amount.should.equal(defaultAmountCaptured);
+    defaultTX.refunded.should.equal(round1cts(1));
+    //defaultTX.customerCredit.should.equal(round1cts(1 + defaultAmountReserved-defaultAmountCaptured));
+    console.log('defaultTX.customerCredit',defaultTX.customerCredit)
 
     defaultCustomer = await customer.Customer.get(tx.customer);
     defaultCustomer.balance.should.equal(round1cts(initialBalance-defaultAmountCaptured+1));

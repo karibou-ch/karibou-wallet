@@ -111,11 +111,12 @@ describe("Class transaction with credit.balance mixed with other payment", funct
     const tx = await transaction.Transaction.get(defaultTX.id);
     const cmp = await tx.capture(15);
     tx.amount.should.equal(15);
+    tx.refunded.should.eql(0);
     tx.status.should.equal("paid");
 
   });  
 
-  it("Transaction refound amount 9 fr", async function() {
+  it("Transaction refound amount 9 of 15 fr", async function() {
     const tx = await transaction.Transaction.get(defaultTX.id);
     const cmp = await tx.refund(9);
     tx.amount.should.eql(15);
@@ -145,6 +146,8 @@ describe("Class transaction with credit.balance mixed with other payment", funct
     // console.log('---- tx ', tx.status);
     tx.amount.should.eql(15);
     tx.refunded.should.eql(15);
+    tx.customerCredit.should.equal(10);
+
     tx.status.should.eql("refunded");
 
     defaultCustomer = await customer.Customer.get(tx.customer);
