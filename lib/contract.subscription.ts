@@ -119,6 +119,11 @@ export class SubscriptionContract {
   private _subscription: Stripe.Subscription; 
   private _interval:Interval;
   private _interval_count:number;
+  
+  // https://docs.stripe.com/event-destinations#events-overview
+  // this property indicates update in the subscription 
+  public previous_attributes:any;
+
 
   private constructor(subs:Stripe.Subscription) {
     this._subscription = subs;

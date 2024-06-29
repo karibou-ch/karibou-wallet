@@ -131,6 +131,19 @@ export const $stripe = new Stripe(Config.option('stripePrivatekey'), {
 });
 
 
+export const normalizePhone = function(phone) {
+  // Remove all non-digits plus keep '+'
+  // lookaheads (?!...) do not consume characters in the string;
+  // they simply check that what follows does not match the specified pattern.
+	let normalizedNumber = phone.replace(/(?!^\+)\D/g, '');
+
+  // If the number starts with '00', replace it with '+'
+  if (normalizedNumber.startsWith('00')) {
+    normalizedNumber = '+' + normalizedNumber.slice(2);
+  }
+  return normalizedNumber;
+} 
+
 export const round5cts=function (value) {
 	return parseFloat((Math.round(value*20)/20).toFixed(2))
 }
@@ -374,7 +387,7 @@ export function stripeParseError(err) {
 	// - reason : card_velocity_exceeded
 	// - reason : previously_declined_do_not_retry
 	// - seller_message: "You previously attempted to charge this card. When the customer's bank declined that payment, it directed Stripe to block future attempts."
-	console.log('---DBG error code',err.type,err.decline_code, err.outcome)
+	//console.log('---DBG error code',err.type,err.decline_code, err.outcome, err.message);
 	switch (err.type) {
 	  case 'StripeCardError':
 			// A declined card error

@@ -27,7 +27,7 @@
  const weekdays = "dimanche_lundi_mardi_mercredi_jeudi_vendredi_samedi".split('_');
 
 describe("Class subscription", function(){
-  this.timeout(8000);
+  this.timeout(10000);
 
   let defaultCustomer;
   let defaultPaymentAlias;

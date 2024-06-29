@@ -61,6 +61,9 @@ export class Webhook {
     // customer.subscription.resumed
     // customer.subscription.deleted
     //
+    // https://docs.stripe.com/event-destinations#events-overview 
+    // customer.subscription.updated (*.updated => previous_attributes)
+    //
     // ** normalement c'est uniquement à la création
     // invoice.payment_action_required
     //
@@ -97,6 +100,7 @@ export class Webhook {
 
       //
       // clear cache on subscription ending
+      // before catching all subscription events
       if(event.type == 'customer.subscription.deleted'){        
         const stripeContract = event.data.object as Stripe.Subscription;
         const customer = await Customer.get(xor(stripeContract.customer.toString()));
@@ -109,6 +113,29 @@ export class Webhook {
         SubscriptionContract.clearCache(stripeContract.id);
         return { event: event.type, contract } as WebhookStripe;
       }
+
+      //
+      // collect subscription 
+      // - customer.subscription.updated
+      // - customer.subscription.paused
+      // - customer.subscription.resumed
+      if(event.type.indexOf('customer.subscription.') > -1) {
+        const stripeContract = event.data.object as Stripe.Subscription;
+        
+        const contract = await SubscriptionContract.get(stripeContract.id.toString());
+        contract.previous_attributes = event.data.previous_attributes;
+
+        //
+        // be sure of env
+        const testing = (contract.environnement == 'test')
+        if(testing) {
+          return { event: event.type,testing, error:false, contract};
+        }
+        // get customer
+        const customer = await contract.customer();
+        return { event: event.type, testing, contract, customer ,error:false} as WebhookStripe;
+      }
+
       // 
       // on invoice payment action required
       // https://stripe.com/docs/billing/subscriptions/webhooks#additional-action
@@ -151,7 +178,6 @@ export class Webhook {
         return { event: event.type ,testing,contract, customer, transaction,error:false} as WebhookStripe;
       }
 
-
       // 
       // 1/ invoice payment success with VISA/MC 
       // 2/ invoice payment success with customer credit
@@ -192,8 +218,6 @@ export class Webhook {
         return { event: event.type , testing,contract, customer, transaction ,error:false} as WebhookStripe;
       }
 
-
-
       //
       // Confirm validity when balance is updated, 
       if (event.type == 'customer.balance_funded') {
@@ -204,7 +228,6 @@ export class Webhook {
         }catch(err) {}
         return { event: event.type,testing:false, customer ,error:false} as WebhookStripe;  
       }
-
 
       //
       // try to use (POST) customers/cus_id/balance_trasanctions
@@ -217,6 +240,8 @@ export class Webhook {
           // update the cache if customer is modified from Stripe
           Customer.clearCache(stripeCustomer.id);
           customer = await Customer.fromWebhook(stripeCustomer);
+          customer.previous_attributes = event.data.previous_attributes;
+
     
           transactions = await customer.listBalanceTransactions(2);
         }catch(err) {}

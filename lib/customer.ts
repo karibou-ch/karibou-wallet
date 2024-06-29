@@ -1,7 +1,8 @@
 import { strict as assert } from 'assert';
 import Stripe from 'stripe';
 import { $stripe, stripeParseError, crypto_randomToken, crypto_fingerprint, xor, unxor, 
-         KngPayment, KngPaymentAddress, KngCard, CashBalance, CreditBalance, dateFromExpiry, parseYear } from './payments';
+         KngPayment, KngPaymentAddress, KngCard, CashBalance, CreditBalance, dateFromExpiry, parseYear, 
+         normalizePhone} from './payments';
 import Config, { nonEnumerableProperties } from './config';
 
 //
@@ -32,6 +33,9 @@ export class Customer {
   //
   // collected from metadata
   private _addresses:KngPaymentAddress[];
+
+  // handle previous customer attributes from customer.update webhook event
+  public previous_attributes: any;
 
   /**
    * ## customer(id,email,displayName,uid)
@@ -371,6 +375,9 @@ export class Customer {
     this.lock(_method);
 
     try{
+      if(address.phone) {
+        address.phone = normalizePhone(address.phone);
+      }
       this._metadata[address.id] = JSON.stringify(address,null,0);
       const customer = await $stripe.customers.update(
         this._id,
@@ -770,7 +777,7 @@ export class Customer {
 
       //
       // verify if payment is used 
-      const payment_used = subs.data.some(sub => sub.default_payment_method = card_id)
+      const payment_used = subs.data.some(sub => sub.default_payment_method == card_id || unxor(sub.metadata.payment_credit)== card_id)
       if(payment_used) {
         throw new Error("Impossible de supprimer une méthode de paiement utilisée par une souscription");
       }
@@ -929,13 +936,22 @@ export class Customer {
       if(identity.lname){
         updated.metadata.lname = identity.lname;
       }
+
+      //
+      // USER-ID (FIXME missing strong email verification)
+      // this is the default email address
       if(identity.email){
         updated.email = identity.email;
       }
+
+      //
+      // USER-ID (FIXME missing strong phone verification)
+      // this is the default phone number
       if(identity.phone){
-        updated.phone = identity.phone;
+        updated.phone = normalizePhone(identity.phone);
       }
 
+      // avoid update on unit testing 
       if(this._id.indexOf('cus_1234')==-1){
         const customer = await $stripe.customers.update(
           this._id,updated

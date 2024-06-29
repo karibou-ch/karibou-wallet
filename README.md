@@ -40,7 +40,7 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [X] update contract items (add/update or remove specifics items)
 * [x] Initial Customer management to protect sensitives data
   * [x] sensitives data are decoupled from karibou
-  * [ ] email, phone 
+  * [x] email, phone 
   * [x] fname, lname
   * [ ] addresses
   * [x] payment methods
@@ -54,7 +54,7 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [ ] coupon is limited for a vendor
   * [ ] coupon is limited for a product
   * [ ] coupon is limited with a timeframe
-
+* [ ] 
 
 
 ## Prerequisites
