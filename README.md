@@ -30,6 +30,11 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [X] payment can be made with customer balance and completed with card 
 * [x] Initial credit balance account (for invoice)
 * [x] Two step payment and (partial) refund (authorization, capture, refund)
+  * [X] debit/credit cards
+  * [x] debit/credit balance cash 
+  * [x] invoice
+  * [ ] twint [paymentIntents.create](https://docs.stripe.com/api/payment_intents/create#create_payment_intent-payment_method_options-twint)
+  * [ ] revolut_pay [paymentIntents.create](https://docs.stripe.com/api/payment_intents/create#create_payment_intent-payment_method_options-revolut_pay)
 * [ ] Multiple accounts transfer funds (**DOING**)
 * [x] Subscription (weekly, monthly)
   * [x] with payment method `visa/mc/invoice/cash`
