@@ -33,6 +33,7 @@ The purpose of this project is to provide a simple and intuitive API to handle a
   * [X] debit/credit cards
   * [x] debit/credit balance cash 
   * [x] invoice
+  * [ ] applepay [gpt](https://chatgpt.com/share/e7f2155e-f9cf-4222-9585-599e5daf096e)
   * [ ] twint [paymentIntents.create](https://docs.stripe.com/api/payment_intents/create#create_payment_intent-payment_method_options-twint)
   * [ ] revolut_pay [paymentIntents.create](https://docs.stripe.com/api/payment_intents/create#create_payment_intent-payment_method_options-revolut_pay)
 * [ ] Multiple accounts transfer funds (**DOING**)
