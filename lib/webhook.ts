@@ -248,6 +248,18 @@ export class Webhook {
 
         return { event: event.type ,testing: false, customer, error:false} as WebhookStripe;
       }
+
+      //
+      //
+      // update transaction status for WINT,ApplePay,
+      if (event.type =='payment_intent.succeeded' || event.type =='payment_intent.payment_failed') {
+        const intent = event.data.object;
+        const transaction = await Transaction.get(xor(intent.id));
+        const customer = await Customer.get(xor(transaction.customer));
+        const error = intent.last_payment_error && intent.last_payment_error.message;
+        return { event: event.type ,testing: false, transaction, customer, error} as WebhookStripe;
+      }
+
       //
       // else ...
       console.log(`Unhandled event type ${event.type}`);
