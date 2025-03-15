@@ -198,7 +198,60 @@ describe("Class transaction with negative customer credit", function(){
 
   });
 
-  it("invoice Transaction paid bill differ from captured amount 4 chf", async function() {
+  xit("DEPRECATED capture tx marked as INVOICE with differ amount AS NO INCIDENCE", async function() {
+    const orderPayment = {
+      status:defaultTX.status,
+      transaction:defaultTX.id,
+      issuer:defaultTX.provider
+    }
+    const tx = await transaction.Transaction.fromOrder(orderPayment);
+    //
+    // when bill is valided, the amount is the same as the captured amount
+    defaultTX = await tx.capture(40.02);
+    defaultTX.amount.should.equal(4.01);
+    defaultTX.status.should.equal('invoice_paid');
+
+    const cust = await customer.Customer.get(tx.customer);
+    cust.balance.should.equal(-4.01);
+  });
+
+
+  xit("invoice_paid refund partial amount 1 of 4.01", async function() {
+    const orderPayment = {
+      status:defaultTX.status,
+      transaction:defaultTX.id,
+      issuer:defaultTX.provider
+    }
+    const tx = await transaction.Transaction.fromOrder(orderPayment);
+    defaultTX = await tx.refund(1.0);
+    defaultTX.provider.should.equal("invoice");
+    defaultTX.status.should.equal("invoice_paid");
+    defaultTX.amount.should.equal(4.01);
+    defaultTX.refunded.should.equal(1);
+    const cust = await customer.Customer.get(tx.customer);
+    cust.balance.should.equal(-3.01);
+  });  
+
+  it("final capture of invoice_paid  with amount differ from captured AS NO INCIDENCE", async function() {
+    const orderPayment = {
+      status:defaultTX.status,
+      transaction:defaultTX.id,
+      issuer:defaultTX.provider
+    }
+    const tx = await transaction.Transaction.fromOrder(orderPayment);
+    //
+    // when bill is valided, the amount is the same as the captured amount
+    defaultTX = await tx.capture(5.0); 
+    defaultTX.amount.should.equal(4.01);
+    defaultTX.status.should.equal('paid');
+
+    const cust = await customer.Customer.get(tx.customer);
+    cust.balance.should.equal(0);
+
+  });
+
+
+  it("invoice Transaction paid bill of aleady captured bill throw an error", async function() {
     const orderPayment = {
       status:defaultTX.status,
       transaction:defaultTX.id,
@@ -206,28 +259,11 @@ describe("Class transaction with negative customer credit", function(){
     }
     try{
       const tx = await transaction.Transaction.fromOrder(orderPayment);
-      defaultTX = await tx.capture(4.02);
+      defaultTX = await tx.capture(4.01);
     }catch(err){
-      err.message.should.containEql('capture amount is greater than the');
-    }
+      err.message.should.containEql('Transaction need to be authorized');
+    }    
 
-  });
-
-  it("invoice Transaction paid bill of captured amount 4 chf", async function() {
-    const orderPayment = {
-      status:defaultTX.status,
-      transaction:defaultTX.id,
-      issuer:defaultTX.provider
-    }
-    const tx = await transaction.Transaction.fromOrder(orderPayment);
-    defaultTX = await tx.capture(4.01);
-    defaultTX.provider.should.equal("invoice");
-    defaultTX.status.should.equal("paid");
-    defaultTX.amount.should.equal(4.01);
-    defaultTX.customerCredit.should.equal(4.01);
-
-    const cust = await customer.Customer.get(tx.customer);
-    cust.balance.should.equal(-4.01);
   });
 
   it("invoice Transaction refund amount too large throw an error", async function() {
@@ -259,8 +295,7 @@ describe("Class transaction with negative customer credit", function(){
     defaultTX.amount.should.equal(4.01);
     defaultTX.refunded.should.equal(1);
     const cust = await customer.Customer.get(tx.customer);
-    cust.balance.should.equal(-3.01);
-
+    cust.balance.should.equal(1);
   });  
 
   it("invoice Transaction refund amount too large between refunds throw an error", async function() {

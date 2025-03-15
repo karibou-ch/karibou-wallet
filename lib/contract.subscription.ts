@@ -56,6 +56,7 @@ export interface Subscription {
   id:string;
   plan:"service"|"customer"|"business"|"patreon"|string;
   customer: string;// as karibou id
+  paymentId?: string; //
   description: string;
   note:string;
   start:Date;
@@ -244,6 +245,12 @@ export class SubscriptionContract {
       description
     }
 
+    //
+    // add payment id for update feature
+    if( this._subscription.default_payment_method) {
+      result.paymentId = xor(this._subscription.default_payment_method as string);
+    }
+
     // 
     // subscription for product items with shipping
     if(this._subscription.metadata.address){
@@ -279,7 +286,8 @@ export class SubscriptionContract {
     if( this._subscription.default_payment_method) {
       return xor(this._subscription.default_payment_method as string);
     }
-    throw new Error("Invalid payment method in subscript "+this.id);
+    // throw new Error("Invalid payment method in subscript "+this.id);
+    return null;
   }
 
   get paymentCredit() {
@@ -418,8 +426,11 @@ export class SubscriptionContract {
     await $stripe.paymentIntents.confirm(tid,{
       payment_method:unxor(card.id)
     });
-    
-    this._subscription = await $stripe.subscriptions.retrieve((this._subscription.id),{expand:['latest_invoice.payment_intent']}) as any;
+
+    this._subscription =  await $stripe.subscriptions.update(this._subscription.id,{
+      default_payment_method:unxor(card.id),
+      expand: ['latest_invoice.payment_intent']
+    })    
 
     cache.set(this._subscription.id,this);
 
@@ -598,6 +609,10 @@ export class SubscriptionContract {
 
 
     try{
+
+      if(card.type == 'twint') {
+        throw new Error("Twint n'est pas supporté pour les souscriptions");
+      }
       //
       // validate fees range [0..1]
       if((fees>1) || (fees <0)) {

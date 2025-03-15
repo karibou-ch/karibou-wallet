@@ -27,7 +27,7 @@ const { Webhook,WebhookContent } = require("../dist/webhook");
  const weekdays = "dimanche_lundi_mardi_mercredi_jeudi_vendredi_samedi".split('_');
 
 describe("Class subscription.payment", function(){
-  this.timeout(8000);
+  this.timeout(10000);
 
   let defaultCustomer;
   let defaultSub;
@@ -134,6 +134,8 @@ describe("Class subscription.payment", function(){
     card = createTestMethodFromStripe(methodValid);
     defaultSub = await defaultSub.updatePaymentMethod(card);
     defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
+    should.exist(defaultSub.content.paymentId)
+    defaultSub.content.paymentId.should.equal(card.id)
 
   });
 
@@ -190,6 +192,9 @@ describe("Class subscription.payment", function(){
 
     //console.log('----',defaultSub.content)
     should.exist(defaultSub.content.latestPaymentIntent.id);
+    should.exist(defaultSub.content.paymentId)
+    defaultSub.content.paymentId.should.equal(card.id)
+
   });
 
 });

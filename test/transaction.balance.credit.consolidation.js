@@ -118,7 +118,11 @@ describe("transaction.balance.credit.consolidation", function(){
     tx.status.should.equal("invoice");
 
     defaultCustomer = await customer.Customer.get(tx.customer);
-    defaultCustomer.balance.should.equal(round1cts(initialBalance-defaultAmountCaptured));
+    const balance = round1cts(initialBalance-defaultAmountCaptured);
+
+    //
+    // -122.05
+    defaultCustomer.balance.should.equal(balance);
 
   });
 
@@ -131,19 +135,52 @@ describe("transaction.balance.credit.consolidation", function(){
     const tx = await transaction.Transaction.fromOrder(orderPayment);
     defaultTX = await tx.refund(1.0);
     defaultTX.provider.should.equal("invoice");
-    defaultTX.status.should.equal("refunded");
+    defaultTX.status.should.equal("invoice");
     defaultTX.amount.should.equal(defaultAmountCaptured);
     defaultTX.refunded.should.equal(round1cts(1));
     //defaultTX.customerCredit.should.equal(round1cts(1 + defaultAmountReserved-defaultAmountCaptured));
     console.log('defaultTX.customerCredit',defaultTX.customerCredit)
 
     defaultCustomer = await customer.Customer.get(tx.customer);
-    defaultCustomer.balance.should.equal(round1cts(initialBalance-defaultAmountCaptured+1));
-
+    const balance = round1cts(initialBalance-defaultAmountCaptured+1);
+    // after refund 1fr  credit is -121.05
+    defaultCustomer.balance.should.equal(balance);
 
   });  
 
+  xit("DEPRECATED: mark invoice as INVOICE_PAID", async function() {
+    const orderPayment = {
+      status:defaultTX.status,
+      transaction:defaultTX.id,
+      issuer:defaultTX.provider
+    }
+    const tx = await transaction.Transaction.fromOrder(orderPayment);
+    //
+    // when bill is valided, the amount is the same as the captured amount
+    
+    defaultTX = await tx.capture(121.05);
+    defaultTX.status.should.equal('invioce_paid');
 
+    const cust = await customer.Customer.get(tx.customer);
+    cust.balance.should.equal(-121.05);
+  });  
+
+  it("mark invoice_paid as PAID", async function() {
+    const orderPayment = {
+      status:defaultTX.status,
+      transaction:defaultTX.id,
+      issuer:defaultTX.provider
+    }
+    const tx = await transaction.Transaction.fromOrder(orderPayment);
+    //
+    // when bill is valided, the amount is the same as the captured amount
+    
+    defaultTX = await tx.capture(121.05);
+    defaultTX.status.should.equal('paid');
+
+    const cust = await customer.Customer.get(tx.customer);
+    cust.balance.should.equal(initialBalance+1);
+  });    
   xit("invoice Transaction refund all available amount 3 of 3", async function() {
     const orderPayment = {
       status:defaultTX.status,

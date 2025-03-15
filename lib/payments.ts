@@ -5,15 +5,19 @@ import { createHash, randomBytes } from 'crypto';
 
 
 export enum KngPayment {
-  card = 1,
-  sepa,
-  balance,
-  credit,
-  bitcoin  
+    card = 1,
+    sepa = "sepa",
+    balance = "balance",
+    credit = "credit",
+    twint = "twint",
+    apple = "apple",
+    bitcoin = "bitcoin",
+    ethereum = "etereum",
+    erc20 = "erc20"
 };
 
 export enum KngPaymentIssuer {
- "american express" = "american express",
+ 	"american express" = "american express",
 	visa = "visa",
 	mastercard = "mastercard",
 	mc = "mc",
@@ -22,6 +26,7 @@ export enum KngPaymentIssuer {
 	cash = "cash",
 	balance = "balance",
 	bitcoin = "bitcoin",
+	twint = "twint",
 	amex = "amex"	
 };
 
@@ -77,6 +82,9 @@ export interface KngPaymentInvoice {
   transfer_group?:string;
   currency:string;
   description:string;
+  last_payment_error?:any;
+  payment_method_types?:any;
+  capture_method?:any;
 }
 
 export interface KngPaymentAddress {
@@ -420,6 +428,13 @@ export const createTestMethodFromStripe=(stripe)=> {
 	alias: xor(stripe.id),
 	id: xor(stripe.id)}
 };
+
+export const card_twint = {
+	type:KngPayment.twint,
+	issuer:'twint',
+	alias: 'twint',
+} as KngCard;
+
 
 export const card_mastercard_prepaid = {
 	type:KngPayment.card,

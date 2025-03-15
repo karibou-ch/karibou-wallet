@@ -21,7 +21,6 @@
 
 describe("Class transaction.stripe", function(){
   this.timeout(8000);
-
   let defaultCustomer;
   let defaultPaymentAlias;
   let defaultTX;
@@ -106,6 +105,7 @@ describe("Class transaction.stripe", function(){
     tx.should.property("group");
     tx.should.property("customer");
     tx.authorized.should.equal(true);
+    tx.status.should.equal('authorized');
     tx.amount.should.equal(2);
     tx.group.should.equal('AAA');
     tx.oid.should.equal('01234');
@@ -124,6 +124,7 @@ describe("Class transaction.stripe", function(){
   it("Transaction load authorization", async function() {
     const tx = await transaction.Transaction.get(defaultTX);
     tx.authorized.should.equal(true);
+    tx.status.should.equal('authorized');
     tx.amount.should.equal(2);
     tx.oid.should.equal('01234');
     tx.requiresAction.should.equal(false);
@@ -221,6 +222,7 @@ describe("Class transaction.stripe", function(){
           name: 'foo bar family'
       }
     };
+    // config.option('debug',true);
 
     // load card from default customer
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
@@ -240,7 +242,7 @@ describe("Class transaction.stripe", function(){
     await atx.refund(1.0);
     atx.refunded.should.equal(3);
     atx.amount.should.equal(4.55);
-
+    defaultCustomer.balance.should.equal(0);
     defaultTX = tx;
 
   });
@@ -253,6 +255,7 @@ describe("Class transaction.stripe", function(){
       issuer:'mastercard'
     }
     const tx = await transaction.Transaction.fromOrder(orderPayment);
+    tx.amount.should.equal(4.55);
     tx.provider.should.equal("stripe");
     tx.refunded.should.equal(3);
     tx.status.should.equal("refunded");
@@ -260,9 +263,23 @@ describe("Class transaction.stripe", function(){
     await tx.refund();
     tx.refunded.should.equal(4.55);
     tx.amount.should.equal(4.55);
-
+    defaultCustomer.balance.should.equal(0);
 
   });
+
+  it("Transaction with wrong amount create and cancel", async function() {
+
+    // load card from default customer
+    try{
+      const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+      const tx = await transaction.Transaction.authorize(defaultCustomer,card,16.65,paymentOpts)
+      await tx.cancel();  
+    }catch(err) {
+      console.log(err.message)
+      should.not.exist(err);
+    }
+  });
+
 
   it("Transaction create and cancel", async function() {
 

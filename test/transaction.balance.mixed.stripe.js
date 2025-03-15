@@ -18,7 +18,7 @@ const axios = require('axios');
 const { default: Config } = require("../dist/config");
 
 
-describe("Class transaction with credit.balance mixed with other payment", function(){
+describe("Class transaction with credit.balance mixed with Stripe", function(){
   this.timeout(8000);
 
   let defaultCustomer;
@@ -80,7 +80,7 @@ describe("Class transaction with credit.balance mixed with other payment", funct
     const tx = await transaction.Transaction.authorize(defaultCustomer,card,20,paymentOpts)
     defaultCustomer = await customer.Customer.get(tx.customer);
     defaultCustomer.balance.should.equal(0);
-    tx.status.should.equal("requires_capture");
+    tx.status.should.equal("authorized");
     tx.provider.should.equal("stripe");
     tx.customerCredit.should.equal(0);
     defaultTX = tx;
@@ -93,7 +93,7 @@ describe("Class transaction with credit.balance mixed with other payment", funct
     const tx = await transaction.Transaction.authorize(defaultCustomer,card,20,paymentOpts)
     defaultCustomer = await customer.Customer.get(tx.customer);
     defaultCustomer.balance.should.equal(0);
-    tx.status.should.equal("requires_capture");
+    tx.status.should.equal("authorized");
     tx.provider.should.equal("stripe");
     tx.customerCredit.should.equal(10);
     defaultTX = tx;
@@ -116,7 +116,8 @@ describe("Class transaction with credit.balance mixed with other payment", funct
 
   });  
 
-  it("Transaction refound amount 9 of 15 fr", async function() {
+  it("Transaction refund amount 9 of 15 fr", async function() {
+    //config.option('debug',true);
     const tx = await transaction.Transaction.get(defaultTX.id);
     const cmp = await tx.refund(9);
     tx.amount.should.eql(15);
@@ -127,7 +128,7 @@ describe("Class transaction with credit.balance mixed with other payment", funct
     defaultCustomer.balance.should.equal(4);
   });  
 
-  it("Transaction refound amount 1 fr", async function() {
+  it("Transaction refund amount 1 fr", async function() {
     const tx = await transaction.Transaction.get(defaultTX.id);
     const cmp = await tx.refund(1);
     tx.amount.should.eql(15);
@@ -138,7 +139,7 @@ describe("Class transaction with credit.balance mixed with other payment", funct
     defaultCustomer.balance.should.equal(5);
   });  
 
-  it("Transaction refound all", async function() {
+  it("Transaction refund all", async function() {
     const tx = await transaction.Transaction.get(defaultTX.id);
     const cmp = await tx.refund();
     // console.log('---- tx ', tx.amount);

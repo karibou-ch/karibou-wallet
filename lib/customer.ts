@@ -201,7 +201,11 @@ export class Customer {
 
       assert(email);
       assert(uid);
+      
+      //Le prénom (First Name - fname)
       assert(fname);
+
+      //Le nom de famille (Last Name - lname)
       assert(lname);
             
       const stripe = await $stripe.customers.create({
@@ -771,19 +775,22 @@ export class Customer {
 
       const card_id = unxor(method.id);
 
-      const subs = await $stripe.subscriptions.list({
-        customer:this._id
-      });      
-
       //
-      // verify if payment is used 
-      const payment_used = subs.data.some(sub => sub.default_payment_method == card_id || unxor(sub.metadata.payment_credit)== card_id)
-      if(payment_used) {
-        throw new Error("Impossible de supprimer une méthode de paiement utilisée par une souscription");
-      }
+      // FIXME DEPRECATED, invalid payment method cannot be replaced with this implementation
+      // const subs = await $stripe.subscriptions.list({
+      //   customer:this._id
+      // });      
+
+      // //
+      // // verify if payment is used 
+      // const payment_used = subs.data.some(sub => sub.default_payment_method == card_id || unxor(sub.metadata.payment_credit)== card_id)
+      // if(payment_used) {
+      //   throw new Error("Impossible de supprimer une méthode de paiement utilisée par une souscription");
+      // }
 
       //
       // remove credit balance payment method
+      // FIXME updating invoice, should not remove balance 
       if(this._sources[index].issuer=='invoice'){
         this._metadata['creditbalance'] = null;
         this._metadata['allowCredit'] = null;

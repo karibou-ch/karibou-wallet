@@ -148,6 +148,8 @@ describe("Class transaction with mixed positive customer credit", function(){
   });
 
   it("Transaction refound amount 1 fr", async function() {
+    // config.option('debug',true);
+
     const orderPayment = {
       status:defaultTX.status,
       transaction:defaultTX.id,

@@ -136,11 +136,11 @@ describe("contract.subscription.invoice", function(){
       const card = customer.findMethodByID(pid);
       should.exist(card);
       await customer.removeMethod(card);
-      should.not.exist(true);
   
     }catch(err) {
-      should.exist(err);
-      err.message.should.containEql('Impossible de supprimer');
+      should.not.exist(err);
+      // DEPRECATED 
+      //err.message.should.containEql('Impossible de supprimer');
 
     }
   });
