@@ -34,7 +34,7 @@ export default class Config {
     if(process.env.NODE_ENV=='test'){
       Config.settings.allowMultipleSetOption=true;
     }
-    else throw new Error('Reset is not possible here')
+    else throw new Error('❌ Reset is not possible in production')
   }
 
   //
