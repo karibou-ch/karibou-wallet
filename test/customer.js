@@ -387,7 +387,7 @@ describe("customer", function(){
       should.not.exist(payment);
     }catch(err) {
       //console.log('----',err.message)    
-      err.message.should.containEql('code de sécurité')
+      err.message.should.containEql('CVC est incorrect')
       should.exist(err);
     }
   });
