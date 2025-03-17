@@ -422,23 +422,34 @@ export class Customer {
   * - https://stripe.com/docs/billing/customer/balance
   * @returns the payment method object
   */
-  async addMethod(token:string) {
+  async addMethod(token:string, options?:any) {
     const _method = 'addmethod'
     this.lock(_method);
 
     try{
-      const method:any = await $stripe.paymentMethods.attach(token,{customer:this._id});
-      if(method.status == "requires_action") {
-        //
-        // 3D secure is fully managed by the frontend ()
-        //
-        throw new Error('addMethod requires_confirmation');
+      const method:any = await $stripe.paymentMethods.attach(token,{
+        customer:this._id,
+      });
+      
+      if (!method || method.customer !== this._id) {
+        throw new Error('Échec d\'attachement de la méthode de paiement, contactez le support karibou.ch');
       }
+
       const card = parseMethod(method);
+
+      //
+      // Set this payment method as the default for all future invoices and payments
+      // Use method.id instead of token to ensure we're using the attached payment method ID
+      await $stripe.customers.update(method.customer, {
+        invoice_settings: {
+          default_payment_method: method.id
+        }
+      });
 
       //
       // replace payment method if old one already exist (update like)
       const exist = this._sources.findIndex(method => card.alias == method.alias )
+
       if(exist>-1) {
         //
         // FIXME cannot remove payment used by an active subscription
@@ -472,10 +483,19 @@ export class Customer {
       );
   
   
+      
       const amount = coupon.amount_off;
       const validity = new Date(coupon.created*1000 + (coupon.duration_in_months||12)*32*86400000);
+      
+      //
+      // check if the coupon is still valid
       if (validity.getTime()<Date.now()){
         throw new Error("Le coupon n'est plus valide, merci de bien vouloir nous contacter");
+      }
+      //
+      // check if the coupon is associated to this customer
+      if(coupon.metadata.id && this.id != coupon.metadata.id) {
+        throw new Error("Le coupon n'est pas associé à ce compte client");
       }
   
       if(!amount || amount<0) {
@@ -994,8 +1014,10 @@ export class Customer {
     return this.methods.some(method => method.alias == fingerprint);
   }
 
+  //
+  // find a payment method by its id or get the default one (invoice)
   findMethodByID(id) {
-    return this._sources.find(card => card.id == id);
+    return this._sources.find(card => card.id == id || card.issuer == id);
   }  
 
 
