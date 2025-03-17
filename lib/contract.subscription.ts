@@ -525,7 +525,7 @@ export class SubscriptionContract {
       // payment method
       // use invoice default_pament_method for Stripe 
       if(card.issuer=="invoice") {
-        metadata.payment_credit=card.id;
+        metadata.payment_credit='invoice';
         options.payment_behavior = 'allow_incomplete';
         options.payment_settings = {}
       } else {
@@ -718,7 +718,7 @@ export class SubscriptionContract {
       // payment method
       // use invoice default_pament_method for Stripe 
       if(card.issuer=="invoice") {
-        metadata.payment_credit=card.id;
+        metadata.payment_credit='invoice';
         options.payment_behavior = 'allow_incomplete';
         options.payment_settings = {}
       } else {
@@ -726,6 +726,9 @@ export class SubscriptionContract {
         //
         // default_payment_method [4], then you can use different payment_behavior (allow_incomplete) to allow an initial 
         // payment attempt immediately and handle potential actions only, if required.
+        // FIXME: Pour utiliser automatiquement la méthode de paiement par défaut du client, il faudrait supprimer
+        // la ligne options.default_payment_method=unxor(card.id) et s'assurer que la carte est définie comme
+        // méthode par défaut au niveau du client avant de créer la subscription.
         options.payment_behavior = 'default_incomplete';
         options.payment_settings = { save_default_payment_method: 'on_subscription' };
         options.default_payment_method=unxor(card.id);

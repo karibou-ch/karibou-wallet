@@ -246,7 +246,7 @@ describe("Class subscription", function(){
     contracts.forEach(contract=> {
       const content = contract.content;
       console.log('\n     ------------------------------- ');
-      console.log('-- ',content.status,content.description, defaultCustomer.name);
+      console.log('-- ',content.status,content.description, defaultCustomer.name,contract.paymentMethod);
       console.log('-- ',content.frequency," ",content.dayOfWeek, content.start);
       console.log('-- ',contract.shipping.name,contract.shipping.streetAdress,contract.shipping.postalCode);
       console.log('-- articles ');

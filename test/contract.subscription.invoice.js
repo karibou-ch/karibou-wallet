@@ -133,6 +133,7 @@ describe("contract.subscription.invoice", function(){
       //
       // verify payment
       const pid = defaultSub.paymentMethod;
+      pid.should.equal('invoice');
       const card = customer.findMethodByID(pid);
       should.exist(card);
       await customer.removeMethod(card);
