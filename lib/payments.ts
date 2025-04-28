@@ -74,6 +74,7 @@ export interface KngPaymentInvoice {
   }
   status: string;
   client_secret: string;
+	cancellation_reason?:string;
   payment_method:"invoice";
   customer: string;
   amount_received?:number;
