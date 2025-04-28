@@ -474,6 +474,7 @@ export  class  Transaction {
       // ou une série de paiements d'une somme supérieure à 100€ 
       // sans authentification, la banque serait alors forcée de demander 
       // l'authentification sur le prochain paiement, même s'il est hors-session.
+      console.log('✅ forced recapture for cancelled transaction after 7 days: amount',amount);
 
       const payment = this._payment as Stripe.PaymentIntent;
       const shipping = {
@@ -563,9 +564,9 @@ export  class  Transaction {
       }        
   
       //
-      // amount test is made after the invoice case
-      if(amount > this.amount) {
-        console.log('❌ ERROR: capture ask amount, balanceAuthAmount, providerAuthAmount, refundBalanceAmount,captureProviderAmount, refundTotal',amount,balanceAuthAmount,providerAuthAmount, refundBalanceAmount,captureProviderAmount,refundTotalAmount);
+      // amount test is done after the invoice case
+      if(this.amount > 0 && amount > this.amount) {
+        console.log('❌ ERROR: capture ask amount,this.amount, balanceAuthAmount, providerAuthAmount',amount,this.amount,balanceAuthAmount,providerAuthAmount);
         throw new Error(errorMsg+' (1)');
       }
 
@@ -628,7 +629,7 @@ export  class  Transaction {
       //
       // case of KngCard
       // captureAmount remove the amount paid from customer credit
-      else {
+      else if(this.status !== "voided" as KngPaymentStatus){
         // if(card.type == KngPayment.card)
         //
         // if amount is 0 (including shipping), cancel and mark it as paid
@@ -647,16 +648,20 @@ export  class  Transaction {
         metadata.customer_credit = (Math.round(customerCreditCaptureAmount*100)+'');
         metadata.refund = '0';
         metadata.order = this.oid;
+        //
+        // default stripe charge with minimum amount of 1 CHF
         const captureOpts = { 
           amount_to_capture:100,
           metadata
         } as Stripe.PaymentIntentCaptureParams;
+        //
+        // update amount if it's greater than 1 CHF
         if(captureProviderAmount>=1) {
           captureOpts.amount_to_capture = Math.round(captureProviderAmount*100);
           this._payment = await $stripe.paymentIntents.capture( this._payment.id , captureOpts);  
         }
         //
-        // case of mixed payment with customer credit
+        // CANCEL stripe transaction: case of mixed payment with customer credit
         else if (customerCreditCaptureAmount>0){
           // Cancel the Stripe transaction because the final amount is below 1 CHF
           const tx = await $stripe.paymentIntents.cancel(this._payment.id, {
@@ -672,6 +677,13 @@ export  class  Transaction {
           this._payment = await $stripe.paymentIntents.capture( this._payment.id , captureOpts);  
         }
 
+      }
+      //
+      // force recapture when the charge has expired
+      // case of voided transaction after 7 days (the charge has expired)
+      // FIXME: missing test _force_recapture(amount) when tx.status is "voided"
+      else if(this._payment.cancellation_reason == 'automatic'){
+        this._payment = await _force_recapture(amount);
       }
       return this;
     }catch(err) {
@@ -691,6 +703,7 @@ export  class  Transaction {
 			}
 
       //
+      // DEPRECATED, use case of voided transaction after 7 days (the charge has expired)
       // FORCE RECAPTURE when paymentIntent has expired
 			// FIXME replace recapture when 'the charge has expired' but with payment_intents
 			// case of recapture
