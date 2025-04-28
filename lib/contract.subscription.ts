@@ -47,7 +47,6 @@ export type SchedulerItemFrequency = 0|"day"|"week"|"2weeks"|"month"|string;
 
 
 export interface SubscriptionAddress extends KngPaymentAddress {
-  price?:number;
 }
   
 //
@@ -77,7 +76,6 @@ export interface Subscription {
 
 export interface SubscriptionOptions {
   dayOfWeek?:number,
-  price:number;
   shipping?: SubscriptionAddress
 }
 
@@ -368,22 +366,35 @@ export class SubscriptionContract {
   async pause(to:Date, from?:Date) {
     const metadata = this._subscription.metadata;
 
-    // Stripe won’t send any upcoming invoice emails or webhooks for these invoices 
-    // and the subscription’s status remains unchanged.
-    const behavior:any ={
+    // Stripe pause options and invoice workflow during pause:
+    // 1. 'void': No invoices generated during pause. 
+    //    Webhooks: No invoice events triggered.
+    //    
+    // 2. 'keep_as_draft': Invoices created as drafts (invoice.created) but not finalized or sent.
+    //    Webhooks: invoice.created only, no payment attempts.
+    //    
+    // 3. 'mark_uncollectible': Invoices generated (invoice.created, invoice.finalized) but marked uncollectible. 
+    //    Webhooks: invoice.created, invoice.finalized, invoice.marked_uncollectible.
+    //    
+    // Documentation: https://stripe.com/docs/billing/subscriptions/pause
+    const behavior:any = {
+      // Default behavior: void - no invoices generated during pause
       behavior: 'void'
     }
-    //
-    // be sure (in frontend) that resume time is 2-3 days before the next shipping day
-    if (to){
+    
+    // Set the resume date if provided
+    // Important: resume time should be 2-3 days before the next shipping day
+    if (to) {
       if(!to.toDateString) throw new Error("resume date is incorrect");
-      behavior.resumes_at=parseInt(to.getTime()/1000+'');
+      // Convert JavaScript Date to Unix timestamp (seconds)
+      behavior.resumes_at = parseInt(to.getTime()/1000+'');
     }
-    //
-    // get optional from
-    // FIXME we need planning for pause
-    // from = (from && from.getTime())? (from) : (new Date());
-    // metadata.from = from.getTime()+'';
+    
+    // Note: We could also use 'from' parameter to schedule a future pause
+    // Currently not implemented but could be added if needed
+    // if (from && from.getTime()) {
+    //   behavior.pauses_at = parseInt(from.getTime()/1000+'');
+    // }
 
     this._subscription = await $stripe.subscriptions.update(
       this._subscription.id,
@@ -399,7 +410,11 @@ export class SubscriptionContract {
     metadata.from = null;
     metadata.to = null;
     this._subscription = await $stripe.subscriptions.update(
-      this._subscription.id, {pause_collection: '', metadata, expand:['latest_invoice.payment_intent']}
+      this._subscription.id, {
+        pause_collection: '', 
+        metadata, 
+        expand:['latest_invoice.payment_intent']
+      }
     );
 
     cache.set(this._subscription.id,this);
@@ -668,6 +683,9 @@ export class SubscriptionContract {
       //
       // use clean shipping with price included
       if(contractShipping) {
+        //
+        // remove price from metadata as it's already in the contract.services[shipping].fees
+        delete contractShipping.price;
         metadata.address = JSON.stringify(contractShipping,null,0);
         metadata.dayOfWeek = dayOfWeek
       }
@@ -881,6 +899,9 @@ export class SubscriptionContract {
       //
       // use clean shipping
       if(contractShipping) {
+        //
+        // remove price from metadata as it's already in the contract.services[shipping].fees
+        delete contractShipping.price;
         metadata.address = JSON.stringify(contractShipping,null,0);
       }
 
@@ -998,6 +1019,7 @@ export class SubscriptionContract {
 
     // constraint subscription by date {created: {gt: Date.now()}}
     const subscriptions:Stripe.ApiList<Stripe.Subscription> = await $stripe.subscriptions.list({
+      status:'all',
       customer:unxor(customer.id) , expand:['data.latest_invoice.payment_intent']
     });
 

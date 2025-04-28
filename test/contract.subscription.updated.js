@@ -27,7 +27,7 @@ const { round1cts } = require("../dist/payments");
  // https://stripe.com/docs/billing/testing/test-clocks?dashboard-or-api=api
  const weekdays = "dimanche_lundi_mardi_mercredi_jeudi_vendredi_samedi".split('_');
 
-describe("Class subscription", function(){
+describe("Class subscription.updated", function(){
   this.timeout(8000);
 
   let defaultCustomer;
@@ -95,6 +95,7 @@ describe("Class subscription", function(){
     defaultSub.should.property("id");
     defaultSub.should.property("content");
     defaultSub.content.status.should.equal("active");
+    should.not.exist(defaultSub.content.shipping.price);
 
   });
 

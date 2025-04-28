@@ -26,7 +26,7 @@
  // https://stripe.com/docs/billing/testing/test-clocks?dashboard-or-api=api
  const weekdays = "dimanche_lundi_mardi_mercredi_jeudi_vendredi_samedi".split('_');
 
-describe("Class subscription", function(){
+describe("Class subscription.creation", function(){
   this.timeout(10000);
 
   let defaultCustomer;
@@ -117,6 +117,8 @@ describe("Class subscription", function(){
     defaultSub.content.items[1].hub.should.equal('mocha');
     defaultSub.content.items.length.should.equal(2);
     defaultSub.content.services.length.should.equal(2);
+
+    should.not.exist(defaultSub.content.shipping.price);
 
     defaultSub.content.items.forEach(item => {
       const elem = items.find(itm => itm.sku == item.sku);
