@@ -11,6 +11,17 @@ const locked = new (require("lru-cache").LRUCache)({ttl:3000,max:1000});
 
 export type Interval = Stripe.Plan.Interval;
 
+export interface CartItem {
+  sku:string;
+  frequency?:SchedulerItemFrequency;
+  quantity:number;  
+  price:number;
+  finalprice:number;
+  hub:string;
+  note?:string;
+  [key: string]: any; // Allow other dynamic properties
+}
+
 export interface SubscriptionProductItem{
   id: string,
   unit_amount: number,
@@ -43,6 +54,7 @@ export enum SchedulerStatus {
 }
 
 
+
 export type SchedulerItemFrequency = 0|"day"|"week"|"2weeks"|"month"|string;
 
 
@@ -55,7 +67,7 @@ export interface Subscription {
   id:string;
   plan:"service"|"customer"|"business"|"patreon"|string;
   customer: string;// as karibou id
-  paymentId?: string; //
+  paymentMethod?: string; // as default payment method
   description: string;
   note:string;
   start:Date;
@@ -76,7 +88,8 @@ export interface Subscription {
 
 export interface SubscriptionOptions {
   dayOfWeek?:number,
-  shipping?: SubscriptionAddress
+  shipping?: SubscriptionAddress,
+  useCustomerDefaultPaymentMethod?: boolean
 }
 
 //
@@ -240,13 +253,8 @@ export class SubscriptionContract {
       services: this.serviceItems,
       plan:this._subscription.metadata.plan||"service",
       latestPaymentIntent:this.latestPaymentIntent,
-      description
-    }
-
-    //
-    // add payment id for update feature
-    if( this._subscription.default_payment_method) {
-      result.paymentId = xor(this._subscription.default_payment_method as string);
+      description,
+      paymentMethod: this.paymentMethod
     }
 
     // 
@@ -284,7 +292,11 @@ export class SubscriptionContract {
     if( this._subscription.default_payment_method) {
       return xor(this._subscription.default_payment_method as string);
     }
-    // throw new Error("Invalid payment method in subscript "+this.id);
+    
+
+    //
+    // A null return value indicates that the subscription will use 
+    // the customer's default payment method at the time of invoice creation.
     return null;
   }
 
@@ -426,29 +438,63 @@ export class SubscriptionContract {
   // validate required action (3ds)
   // 2. payment intent is confirmed and/or card is updated
 
-  // 
-  // Update current contract with the new customer payment method 
+  /*
+   * FIXME: Automatiser la sélection du moyen de paiement via le client Stripe.
+   *
+   * Processus cible :
+   * 1.  **Stocker les moyens de paiement sur le `Customer`** :
+   *     - Au lieu d'associer un `default_payment_method` à l'objet `Subscription`, il faut l'associer au `Customer` via `invoice_settings.default_payment_method`.
+   *     - L'utilisateur devrait pouvoir choisir sa carte "par défaut" pour l'ensemble de son compte.
+   *
+   * 2.  **Laisser la `Subscription` sans moyen de paiement par défaut** :
+   *     - Lors de la création ou de la mise à jour d'un abonnement, le champ `default_payment_method` de la `Subscription` doit être `null`.
+   *
+   * 3.  **Profiter de la cascade de paiement Stripe** :
+   *     - En procédant ainsi, Stripe tentera de payer la facture en utilisant d'abord le moyen de paiement par défaut du `Customer`.
+   *     - En cas d'échec, Stripe essaiera automatiquement les autres moyens de paiement valides attachés au `Customer`, augmentant ainsi les chances de réussite du paiement.
+   *
+   * NOTE DE MIGRATION :
+   * Il faudra créer un script pour mettre à jour tous les abonnements Stripe existants afin de retirer leur `default_payment_method` (le définir à `null`).
+   * Cela les fera basculer sur la nouvelle logique de paiement basée sur le client.
+   */
   async updatePaymentMethod(card:KngCard) {
-    let paymentIntent = this.latestPaymentIntent;
-    if(!paymentIntent) {
-      throw new Error("Missing payment intent");
-    }
-    if(!card || !card.id) {
+    if (!card || !card.id) {
       throw new Error("Missing payment method");
     }
 
-    const tid = paymentIntent.id;
-    await $stripe.paymentIntents.confirm(tid,{
-      payment_method:unxor(card.id)
+    // 1. First, try to settle any pending payment with the new card.
+    const paymentIntent = this.latestPaymentIntent;
+    if (paymentIntent && paymentIntent.status !== 'succeeded') {
+      await $stripe.paymentIntents.confirm(paymentIntent.id, {
+        payment_method: unxor(card.id)
+      });
+    }
+
+    // 2. Now, update the default payment method for future invoices.
+    // We need to refetch to get the current state before deciding which path to take.
+    const freshSub = await $stripe.subscriptions.retrieve(this._subscription.id, { expand: ['customer'] });
+
+    if (freshSub.default_payment_method === null) {
+      // New logic: update customer's default PM.
+      const customerId = (freshSub.customer as Stripe.Customer).id;
+      await $stripe.customers.update(customerId, {
+        invoice_settings: {
+          default_payment_method: unxor(card.id)
+        }
+      });
+    } else {
+      // Legacy logic: update subscription's default PM.
+      await $stripe.subscriptions.update(freshSub.id, {
+        default_payment_method: unxor(card.id)
+      });
+    }
+
+    // 3. Final refetch to get the absolute latest state for the calling context.
+    this._subscription = await $stripe.subscriptions.retrieve(this._subscription.id, {
+      expand: ['latest_invoice.payment_intent', 'customer']
     });
 
-    this._subscription =  await $stripe.subscriptions.update(this._subscription.id,{
-      default_payment_method:unxor(card.id),
-      expand: ['latest_invoice.payment_intent']
-    })    
-
-    cache.set(this._subscription.id,this);
-
+    cache.set(this._subscription.id, this);
     return this;
   }
 
@@ -466,7 +512,7 @@ export class SubscriptionContract {
   }
 
 
-  static async createOnlyFromService(customer:Customer, card:KngPaymentSource, interval:SchedulerItemFrequency,  product) {
+  static async createOnlyFromService(customer:Customer, card:KngPaymentSource, interval:SchedulerItemFrequency,  product, subscriptionOptions: any = {}) {
     const isInvoice = card.issuer == "invoice";
     const quantity = 1;
     const price = product.default_price.unit_amount;
@@ -524,7 +570,7 @@ export class SubscriptionContract {
 
       //
       // with 'default_incomplete' the subscription is deleted after 24h without payment confirmation
-      // without billing_cycle_anchor l’abonnement sera facturé le dernier jour du mois.
+      // without billing_cycle_anchor l'abonnement sera facturé le dernier jour du mois.
       const billing_cycle_anchor = (Date.now()+1000)/1000|0;
       const options = {
         customer: unxor(customer.id),
@@ -543,6 +589,9 @@ export class SubscriptionContract {
         metadata.payment_credit='invoice';
         options.payment_behavior = 'allow_incomplete';
         options.payment_settings = {}
+      } else if (subscriptionOptions.useCustomerDefaultPaymentMethod) {
+        options.payment_behavior = 'default_incomplete';
+        options.expand = ['latest_invoice.payment_intent'];
       } else {
         options.payment_behavior = 'default_incomplete';
         options.payment_settings = { save_default_payment_method: 'on_subscription' };
@@ -607,20 +656,34 @@ export class SubscriptionContract {
   // - multiple subscription for 
   //   https://stripe.com/docs/billing/subscriptions/multiple-products#multiple-subscriptions-for-a-customer
   //   note: use the same billing_cycle_anchor for the same customer
-  static async create(customer:Customer, card:KngPaymentSource, interval:SchedulerItemFrequency, start_from,  cartItems, subscriptionOptions) {
+  /**
+   * @param interval - DEPRECATED: This will be moved into subscriptionOptions in a future version.
+   */
+  static async create(customer:Customer, card:KngPaymentSource, interval:SchedulerItemFrequency, start_from,  cartItems:CartItem[], subscriptionOptions) {
     
     // check Date instance
     // timestamp: must be an integer Unix timestamp [getTime()/1000]
     assert(start_from=='now' || (start_from && start_from.getTime()));
 
-    const {shipping, dayOfWeek, fees, plan} = subscriptionOptions;
+    const {shipping, dayOfWeek, fees, plan, useCustomerDefaultPaymentMethod} = subscriptionOptions;
     assert(fees>=0)
     const _method = 'create'+customer.id;
     lock(_method);
     
     //
-    // validate start_from when interval is month
-    // FIXME avoid billing error we need to know any error 3 days before the shipping
+    // 1. Frequency validation logic
+    //
+    if (!interval) {
+      // If no global interval is provided, ensure every item has its own frequency.
+      if (!cartItems || cartItems.some(item => !item.frequency)) {
+        throw new Error("Invalid subscription: A frequency must be provided either globally or for each item.");
+      }
+    }
+
+    // ⚠️ Note: At this stage, we are only validating presence. The creation logic below
+    // will still use a single interval. A future refactor will be needed to handle
+    // multiple frequencies by creating multiple subscriptions.
+    const effectiveInterval = interval || cartItems[0].frequency;
 
 
     try{
@@ -643,6 +706,8 @@ export class SubscriptionContract {
       //
       // filter cartItems for services or products
       const cartServices = cartItems.filter(item => !item.sku);
+
+      // TODO refactore to handle multiple frequencies
       cartItems = cartItems.filter(item => !!item.sku);
 
       if(!shipping && cartItems.length){
@@ -655,15 +720,18 @@ export class SubscriptionContract {
 
       //
       // create stripe products
-      if(cartItems.some(item => !item.frequency)){
-        throw new Error("incorrect item format (L:601)");
+      // console.log('effectiveInterval',effectiveInterval);
+      // console.log('cartItems',cartItems.map(item => ({frequency:item.frequency,price:item.price})));
+
+      if(cartItems.some(item => (item.frequency!=effectiveInterval||!(item.price>=0)))){
+        throw new Error("incorrect item format");
       }
 
       //
       // build items based on user cart
       const itemsOptions = {
         invoice:(card.issuer=='invoice'), 
-        interval, 
+        interval: effectiveInterval, 
         serviceFees:fees,
         shipping
       }
@@ -697,7 +765,7 @@ export class SubscriptionContract {
       }
 
 
-      const description = "contrat:" + interval + ":"+ customer.uid;
+      const description = "contrat:" + effectiveInterval + ":"+ customer.uid;
       // FIXME, manage SCA or pexpired card in subscription workflow
       // https://stripe.com/fr-ch/guides/strong-customer-authentication#exemptions-de-lauthentification-forte-du-client
       //
@@ -739,14 +807,28 @@ export class SubscriptionContract {
         metadata.payment_credit='invoice';
         options.payment_behavior = 'allow_incomplete';
         options.payment_settings = {}
+      } else if (useCustomerDefaultPaymentMethod) {
+        //
+        // Let Stripe use the customer's default payment method.
+        // The customer must have a default payment method set in their account.
+        //
+        // WARNING: When this option is used, the subscription can be created
+        // with a status of 'incomplete' if the customer has no default
+        // payment method or if the payment fails. The client application
+        // MUST handle the following statuses:
+        // - 'incomplete': The subscription is awaiting payment. The client must
+        //   guide the user to the invoice payment page.
+        // - 'incomplete_expired': The payment was not completed in time (23h).
+        //   The subscription is void and a new one must be created.
+        //
+        options.payment_behavior = 'default_incomplete';
+        options.expand = ['latest_invoice.payment_intent'];
+
       } else {
 
         //
         // default_payment_method [4], then you can use different payment_behavior (allow_incomplete) to allow an initial 
         // payment attempt immediately and handle potential actions only, if required.
-        // FIXME: Pour utiliser automatiquement la méthode de paiement par défaut du client, il faudrait supprimer
-        // la ligne options.default_payment_method=unxor(card.id) et s'assurer que la carte est définie comme
-        // méthode par défaut au niveau du client avant de créer la subscription.
         options.payment_behavior = 'default_incomplete';
         options.payment_settings = { save_default_payment_method: 'on_subscription' };
         options.default_payment_method=unxor(card.id);
@@ -819,7 +901,7 @@ export class SubscriptionContract {
   // update the contract with  karibou cart items
   // replaces the previous contract with the new items and price 
   // https://stripe.com/docs/billing/subscriptions/upgrade-downgrade
-  async update(upItems, subscriptionOptions) {
+  async update(upItems: CartItem[], subscriptionOptions) {
     const _method = 'updateContract'+upItems.length;
     lock(_method);
 
@@ -836,23 +918,23 @@ export class SubscriptionContract {
         throw new Error("Incorrect fees params");
       }
       // in case of shipping
+      // shipping price is mandatory to compute the total price
       if(shipping) {
         assert(shipping.price>=0);
         assert(dayOfWeek>=0);
       }
 
       //
-      // filter cartItems for services or products
+      // filter items for services or products
       const cartServices = upItems.filter(item => !item.sku);
       let cartItems = upItems.filter(item => !!item.sku);
 
       //
       // check available items for update
       if(!cartItems.length) {
-        cartItems = this.content.items;
-        cartItems.forEach(item => {
-          item.frequency=this.interval.frequency;
-          item.price=item.fees;
+        cartItems = this.content.items.map(item => {
+          const cartItem = Object.assign({}, item, {frequency:this.interval.frequency,price:item.fees,finalprice:item.fees}) as unknown as CartItem;
+          return cartItem;
         });
       }
 
@@ -977,7 +1059,7 @@ export class SubscriptionContract {
     }
 
     try{
-      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent']}) as any;
+      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent', 'customer']}) as any;
 
       //
       // expand payment_intent if needed
@@ -1256,7 +1338,7 @@ async function findOrCreateItemService(product,item, interval, isInvoice) {
     type:"service",
     title,
     quantity,
-    fees: (price.toFixed(2)),
+    fees: (price).toFixed(2),
   }
 
   return {metadata, quantity,price_data:serviceItem};
@@ -1265,15 +1347,17 @@ async function findOrCreateItemService(product,item, interval, isInvoice) {
 //
 // only for week or month subscription
 // day subscription is a special case
-function createItemsFromCart(cartItems, interval, isInvoice) {
-  const itemCreation = (item ) => {
+// TODO: must be refactored as createOrUpdateItemsFromCart(...) to handle subscription update
+// TODO: must be refactored as to handle frequencies as item properties
+function createItemsFromCart(cartItems:CartItem[], interval:SchedulerItemFrequency, isInvoice): Stripe.SubscriptionUpdateParams.Item[] {
+  const itemCreation = (item: CartItem) => {
     const price = round1cts(item.price * 100);
 
     //
     // missing fees (see documentation for fees inclusion)
     // warning unit_amount is positive integer in cents 
-    const recurring = (interval=='2weeks')? ({interval:'week',interval_count:2}):({interval,interval_count:1})
-    const instance:SubscriptionItem = { 
+    const recurring:any = (interval=='2weeks')? ({interval:'week',interval_count:2}):({interval,interval_count:1})
+    const instance:SubscriptionItem|Stripe.PriceCreateParams|any = { 
       currency : 'CHF', 
       unit_amount : (isInvoice ? 0:(price)),
       product : item.product,
@@ -1281,7 +1365,7 @@ function createItemsFromCart(cartItems, interval, isInvoice) {
     };
 
     //console.log('--- DBG recurring',instance.recurring);
-    const metadata:SubscriptionMetaItem ={
+    const metadata:SubscriptionMetaItem|Stripe.Emptyable<Stripe.MetadataParam>|any ={
       sku : item.sku,
       type:"product",
       quantity: item.quantity,
@@ -1292,13 +1376,14 @@ function createItemsFromCart(cartItems, interval, isInvoice) {
       fees: (item.price).toFixed(2)
     }
 
-    if(cartItems.variant){
-      metadata.variant = cartItems.variant; 
+    // FIXME must be tested
+    if(item.variant){
+      metadata.variant = item.variant; 
     }
 
     //
     // avoid duplicate in case of update
-    const resultItem:any = {metadata, quantity: item.quantity,price_data:instance};
+    const resultItem:Stripe.SubscriptionUpdateParams.Item = {metadata, quantity: item.quantity,price_data:instance};
     //
     // case of delete or update
     if(item.id){

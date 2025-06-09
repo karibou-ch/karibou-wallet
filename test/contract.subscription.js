@@ -79,7 +79,8 @@ describe("Class subscription.creation", function(){
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
-    const items = cartItems.slice();
+    const items = JSON.parse(JSON.stringify(cartItems.slice()));
+    // console.log('items',items)
     try{
       const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
 
@@ -137,7 +138,10 @@ describe("Class subscription.creation", function(){
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
-    const items = cartItems.filter(item => item.frequency == "week");
+    const items = JSON.parse(JSON.stringify(cartItems.filter(item => item.frequency == "week")));
+    items.forEach(item => {
+      item.frequency = "2weeks";
+    });
 
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
     const subOptions = { shipping,dayOfWeek,fees };

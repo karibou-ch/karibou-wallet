@@ -154,7 +154,7 @@ describe("contract.subscription.invoice", function(){
 
   it("list all SubscriptionContract for one customer", async function() {
     const contracts = await subscription.SubscriptionContract.list(defaultCustomer);
-    contracts.length.should.equal(0);
+    contracts.length.should.equal(1);
 
   });
 

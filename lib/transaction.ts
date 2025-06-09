@@ -116,7 +116,8 @@ export  class  Transaction {
     return (this._payment.client_secret);
   }
 
-  get paymentId():string{
+  // rename paymentId to methodId
+  get paymentMethod():string{
     return xor(this._payment.payment_method as string);
   }
 
