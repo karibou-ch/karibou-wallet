@@ -151,53 +151,31 @@ export class SubscriptionContract {
   }
 
   get id () { return xor(this._subscription.id) }
-  get interval () { 
-    const today = new Date();
-    const frequency = (this._interval=='week' && this._interval_count==2)? '2weeks':this._interval;
+  get interval () {
+    const frequency = (this._interval === 'week' && this._interval_count === 2) ? '2weeks' : this._interval;
 
-    let anchor = new Date(this._subscription.billing_cycle_anchor * 1000);
+    // La source la plus fiable pour la prochaine facture est `current_period_end`.
+    // Stripe calcule cette date pour nous, en tenant compte de l'ancre de facturation, des périodes d'essai, etc.
+    let nextBilling = new Date(this._subscription.current_period_end * 1000);
 
-    let nextBilling = new Date();
-    if(anchor>nextBilling) {
-      nextBilling = anchor;
+    // Si l'abonnement est en pause, la prochaine facturation aura lieu à la date de reprise ou après.
+    const pauseResumeTimestamp = this._subscription.pause_collection?.resumes_at;
+    if (pauseResumeTimestamp) {
+      const resumeDate = new Date(pauseResumeTimestamp * 1000);
+      // Si la prochaine date de facturation calculée est avant la date de reprise,
+      // alors la vraie prochaine facturation est la date de reprise.
+      if (nextBilling < resumeDate) {
+        nextBilling = resumeDate;
+      }
     }
-
-
-    //
-    // week case next billing is always 3 days before the shipping
-    // - Saturday for Tuesday (mar 2)
-    // - Sunday for Wednesday (mer 3)
-    // - Monday for Thusday (jeu 4)
-    // FIXME nextInvoice depends on pauseUntil and the dayOfWeek
-    if(frequency == "week"){
-      nextBilling.setDate(nextBilling.getDate() + 7);
-    }
-
-    if(frequency == "2weeks"){
-      nextBilling.setDate(nextBilling.getDate() + 14);
-    }
-
-    //
-    // month case next billing is always the same day
-    if(frequency == "month"){
-      nextBilling = new Date(this.billing_cycle_anchor);
-      nextBilling.setMonth(nextBilling.getMonth()+1);
-    }
-
-    //
-    // if contract is paused
-    nextBilling = this.pausedUntil || nextBilling;
-    nextBilling.setHours(anchor.getHours());
-    nextBilling.setMinutes(anchor.getMinutes());
-
 
     return {
       frequency,
-      start:this.billing_cycle_anchor,
-      count:this._interval_count,
+      start: this.billing_cycle_anchor,
+      count: this._interval_count,
       dayOfWeek: +this._subscription.metadata.dayOfWeek,
       nextBilling
-    } 
+    };
   }
   
   get environnement() {
@@ -470,28 +448,25 @@ export class SubscriptionContract {
       });
     }
 
-    // 2. Now, update the default payment method for future invoices.
-    // We need to refetch to get the current state before deciding which path to take.
-    const freshSub = await $stripe.subscriptions.retrieve(this._subscription.id, { expand: ['customer'] });
-
-    if (freshSub.default_payment_method === null) {
-      // New logic: update customer's default PM.
-      const customerId = (freshSub.customer as Stripe.Customer).id;
-      await $stripe.customers.update(customerId, {
-        invoice_settings: {
-          default_payment_method: unxor(card.id)
-        }
-      });
-    } else {
-      // Legacy logic: update subscription's default PM.
-      await $stripe.subscriptions.update(freshSub.id, {
+    // 2. Mettre à jour le moyen de paiement par défaut du CLIENT.
+    // C'est la seule source de vérité que nous voulons maintenant.
+    await $stripe.customers.update(this._subscription.customer as string, {
+      invoice_settings: {
         default_payment_method: unxor(card.id)
+      }
+    });
+
+    // 3. Si la souscription avait encore un ancien moyen de paiement, le retirer.
+    // C'est l'étape de migration, qui ne s'exécute que si nécessaire.
+    if (this._subscription.default_payment_method) {
+      await $stripe.subscriptions.update(this._subscription.id, {
+        default_payment_method: null
       });
     }
 
-    // 3. Final refetch to get the absolute latest state for the calling context.
+    // 4. Final refetch to get the absolute latest state for the calling context.
     this._subscription = await $stripe.subscriptions.retrieve(this._subscription.id, {
-      expand: ['latest_invoice.payment_intent', 'customer']
+      expand: ['latest_invoice.payment_intent']
     });
 
     cache.set(this._subscription.id, this);
@@ -1059,7 +1034,7 @@ export class SubscriptionContract {
     }
 
     try{
-      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent', 'customer']}) as any;
+      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent']}) as any;
 
       //
       // expand payment_intent if needed

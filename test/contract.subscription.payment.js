@@ -129,13 +129,16 @@ describe("Class subscription.payment", function(){
 
     //
     // should be requires_action instead of requires_confirmation for unconfirmed capture
+    defaultSub.content.status.should.equal('incomplete');
     defaultSub.content.latestPaymentIntent.status.should.equal("requires_payment_method")
 
     card = createTestMethodFromStripe(methodValid);
     defaultSub = await defaultSub.updatePaymentMethod(card);
+    defaultSub.content.status.should.equal('active');
     defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
-    should.exist(defaultSub.content.paymentMethod)
-    defaultSub.content.paymentMethod.should.equal(card.id)
+    should.not.exist(defaultSub.content.paymentMethod)
+    // DEPRECATED, paymentMethod is delegated to customer
+    //defaultSub.content.paymentMethod.should.equal(card.id)
 
   });
 

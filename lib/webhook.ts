@@ -172,7 +172,8 @@ export class Webhook {
 
         const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
         const transaction = await Transaction.get(xor(paymentIntent));
-        const customer = await contract.customer();
+        const customer = await Customer.get(invoice.customer.toString());
+
         //
         // set pending payment intent, customer have 23h to confirm payment
         return { event: event.type ,testing,contract, customer, transaction,error:false} as WebhookStripe;
@@ -210,10 +211,11 @@ export class Webhook {
           transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
         }
         else if(contract.content.latestPaymentIntent){
-          transaction = await Transaction.get(xor(contract.content.latestPaymentIntent.id));
+          const paymentIntentId = contract.content.latestPaymentIntent.id||contract.content.latestPaymentIntent;
+          transaction = await Transaction.get(xor(paymentIntentId));
         }
 
-        const customer = await contract.customer();
+        const customer = await Customer.get(invoice.customer.toString());
 
         return { event: event.type , testing,contract, customer, transaction ,error:false} as WebhookStripe;
       }
