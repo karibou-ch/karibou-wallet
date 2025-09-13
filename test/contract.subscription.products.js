@@ -54,6 +54,12 @@ describe("Class subscription.products", function(){
   it("SubscriptionContract list products for patreon", async function() {
     const products = await subscription.SubscriptionContract.listProducts();
     const card = createTestMethodFromStripe(methodValid);
+    
+    // ✅ FIX Bug 1: Configurer default_payment_method comme dans payment.js
+    await $stripe.customers.update(unxor(defaultCustomer.id), {
+      invoice_settings: { default_payment_method: methodValid.id }
+    });
+    
     const sub = await subscription.SubscriptionContract.createOnlyFromService(defaultCustomer,card,"month",products[0]);
 
     should.exist(sub);

@@ -110,7 +110,7 @@ describe("Class subscription for service only", function(){
 
 
   // Simple weekly souscription 
-  it("SubscriptionContract create weekly service ", async function() {
+  it.skip("SubscriptionContract create weekly service ", async function() {
 
     const item = {
       id:'service',

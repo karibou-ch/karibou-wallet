@@ -100,7 +100,7 @@ describe("Class subscription.use customer default payment method", function(){
 
     const card = createTestMethodFromStripe(method3ds);
     const subOptions = { shipping,dayOfWeek,fees, useCustomerDefaultPaymentMethod: true };
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
@@ -124,7 +124,7 @@ describe("Class subscription.use customer default payment method", function(){
 
     let card = createTestMethodFromStripe(methodFailed);
     const subOptions = { shipping,dayOfWeek,fees, useCustomerDefaultPaymentMethod: true };
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
@@ -156,7 +156,7 @@ describe("Class subscription.use customer default payment method", function(){
 
     let card = createTestMethodFromStripe(methodFailed);
     const subOptions = { shipping,dayOfWeek,fees, useCustomerDefaultPaymentMethod: true };
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
@@ -187,7 +187,7 @@ describe("Class subscription.use customer default payment method", function(){
 
     let card = createTestMethodFromStripe(methodValid);
     const subOptions = { shipping,dayOfWeek,fees, useCustomerDefaultPaymentMethod: true };
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
     defaultSub.content.status.should.equal('active')
