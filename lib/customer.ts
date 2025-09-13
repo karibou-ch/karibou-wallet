@@ -18,6 +18,7 @@ export class Customer {
   private _cashbalance:any;
   private _balance: number;
   private _balance_is_recently_updated: boolean|undefined;
+  private _default_payment_method:string;
 
   //
   // phone or email share the same role of identity
@@ -42,13 +43,12 @@ export class Customer {
    * @param  customer created by Stripe
    * @constructor
    */
-  private constructor(id:string,email:string, phone: string, cashbalance:any, balance:number, metadata:any) {
+  private constructor(id:string,email:string, phone: string, default_payment_method:string, cashbalance:any, balance:number, metadata:any) {
     assert(id);
     assert(email);
     assert(metadata.uid);
     assert(metadata.fname);
     assert(metadata.lname);
-    
     this._balance = balance;
     this._email = email;
     this._phone = phone ||'';
@@ -58,6 +58,7 @@ export class Customer {
     this._id = (id+'');
     this._metadata = metadata;
     this._cashbalance = cashbalance||{};
+    this._default_payment_method = default_payment_method;
 
     //
     // when loading existant customer
@@ -123,6 +124,14 @@ export class Customer {
     return this._sources.slice();
   }
 
+  /**
+   * Retourne la méthode de paiement par défaut du customer
+   * @returns {KngCard|null} La méthode de paiement par défaut ou null si aucune
+   */
+  get defaultMethod() {
+    return this._sources.find(method => method.default) || null;
+  }
+
   get cashbalance() {
     if(this._cashbalance.available){
       const available = Object.assign({},this._cashbalance.available);
@@ -184,6 +193,7 @@ export class Customer {
         merged.id,
         merged.email,
         merged.phone,
+        stripe.invoice_settings.default_payment_method?.toString() || null,
         merged.cash_balance,
         merged.balance,
         merged.metadata
@@ -217,7 +227,7 @@ export class Customer {
         expand: ['cash_balance']
       });  
 
-      return new Customer(stripe.id,email,phone,stripe.cash_balance,0,stripe.metadata); 
+      return new Customer(stripe.id,email,phone, stripe.invoice_settings?.default_payment_method?.toString() || null,stripe.cash_balance,0,stripe.metadata); 
     }catch(err) {
       throw parseError(err);
     } 
@@ -282,6 +292,7 @@ export class Customer {
         stripe.id,
         stripe.email,
         stripe.phone,
+        stripe.invoice_settings?.default_payment_method,
         stripe.cash_balance,
         stripe.balance,
         stripe.metadata
@@ -301,6 +312,7 @@ export class Customer {
         stripe.id,
         stripe.email,
         stripe.phone,
+        stripe.invoice_settings?.default_payment_method,
         stripe.cash_balance,
         stripe.balance,
         stripe.metadata
@@ -435,7 +447,8 @@ export class Customer {
         throw new Error('Échec d\'attachement de la méthode de paiement, contactez le support karibou.ch');
       }
 
-      const card = parseMethod(method);
+      const card = parseMethod(method, true); // ✅ Cette méthode devient la default
+      this._default_payment_method = method.id;
 
       //
       // Set this payment method as the default for all future invoices and payments
@@ -523,7 +536,7 @@ export class Customer {
 
     // 
     // make sure that we get the latest
-    const methods = await this.listMethods();
+    const methods  = await this.listMethods();
     const result:any = {
       intent: false
     };
@@ -706,6 +719,11 @@ export class Customer {
     cache.set(this.id,this);
     return txs;
   }
+  
+  /**
+   * @deprecated dead function listBankTransfer
+   * @returns 
+   */
   async listBankTransfer(){
     //
     // the installed versions of stripe and @type/stripe doesn't support the 
@@ -730,11 +748,16 @@ export class Customer {
   */
   async listMethods() {
     try{
+      // ✅ RÉCUPÉRER le customer Stripe pour obtenir default_payment_method
+      const defaultPaymentMethodId = this._default_payment_method;
+      
       this._sources = await $stripe.paymentMethods.list({
         customer:this._id,
         type:'card'
       });  
-      this._sources = this._sources.data.map(parseMethod);
+      this._sources = this._sources.data.map(method => 
+        parseMethod(method, method.id === defaultPaymentMethodId)
+      );
 
       //
       // credit customer
@@ -794,6 +817,12 @@ export class Customer {
       }
 
       const card_id = unxor(method.id);
+
+      //
+      // clean in memory default_payment_method
+      if(this._default_payment_method == card_id) {
+        this._default_payment_method = null;
+      }
 
       //
       // FIXME DEPRECATED, invalid payment method cannot be replaced with this implementation
@@ -1082,12 +1111,13 @@ function createCashMethod(_id,uid,month,year) {
   return cashbalance;
 }
 
-function parseMethod(method) {
+function parseMethod(method, isDefault = false) {
   assert(method);
   const id = xor(method.id);
   method = method.card||method;
   const alias = xor(method.fingerprint);
   // FIXME method type is always 1
+  
   return {
     type:parseInt(method.type||1),
     id:id,
@@ -1099,7 +1129,8 @@ function parseMethod(method) {
     fingerprint:method.fingerprint,
     expiry:method.exp_month+'/'+method.exp_year,
     updated:Date.now(),
-    provider:'stripe'
+    provider:'stripe',
+    default: isDefault  // ✅ AJOUT: indique si c'est la méthode par défaut
   };
 
 }
