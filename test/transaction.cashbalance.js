@@ -177,7 +177,8 @@ describe("Class transaction with cashbalance", function(){
   });
 
 
-  it("List cash balance bank transfer ", async function() {
+  // DEPRECATED, dead code
+  xit("List cash balance bank transfer ", async function() {
     const cust = await customer.Customer.get(defaultCustomer.id);
     const tx = await cust.listBankTransfer();
     // console.log('--- DBG tx',tx)

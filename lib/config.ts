@@ -52,7 +52,6 @@ export default class Config {
     }
     return new Config(opts);
   }
-
   //
   //## option(name, [value])
   //*Returns or sets a single configuration option*
