@@ -48,6 +48,7 @@ export enum SchedulerStatus {
   active = "active", 
   paused="paused", 
   pending="pending", 
+  unpaid="unpaid", 
   incomplete="incomplete", 
   trialing="trialing",
   cancel="cancel"
@@ -75,6 +76,7 @@ export interface Subscription {
   pauseUntil: Date|0;
   frequency:SchedulerItemFrequency;
   status:string;
+  acceptUnpaid?:number;
   latestPaymentIntent:any;
   issue?:string;
   fees?:number;
@@ -88,8 +90,8 @@ export interface Subscription {
 
 export interface SubscriptionOptions {
   dayOfWeek?:number,
-  shipping?: SubscriptionAddress,
-  useCustomerDefaultPaymentMethod?: boolean
+  shipping?: SubscriptionAddress
+  // ❌ SUPPRIMÉ: useCustomerDefaultPaymentMethod (automatic_payment_methods always enabled)
 }
 
 //
@@ -151,14 +153,49 @@ export class SubscriptionContract {
   }
 
   get id () { return xor(this._subscription.id) }
+  /**
+   * Calcule les informations de facturation et la prochaine date de facture
+   * 
+   * CAS DE FIGURES pour nextBilling :
+   * 
+   * 1. ABONNEMENT ACTIF (status: 'active')
+   *    → nextBilling = current_period_end (prochaine facture normale)
+   * 
+   * 2. ABONNEMENT EN PAUSE avec limite (pause_collection.resumes_at défini)
+   *    → nextBilling = MAX(current_period_end, resumes_at)
+   *    → La facturation reprend à la date de reprise ou après
+   * 
+   * 3. ABONNEMENT EN PAUSE sans limite (pause_collection.resumes_at = null)
+   *    → nextBilling = current_period_end (mais facturation suspendue)
+   * 
+   * 4. ABONNEMENT CANCELED/EXPIRED (status: 'canceled')
+   *    → nextBilling = null (aucune facture future)
+   * 
+   * 5. ABONNEMENT INCOMPLETE/PAST_DUE
+   *    → nextBilling = current_period_end (facture en attente de paiement)
+   * 
+   * @returns {Object} Informations de facturation avec nextBilling calculé
+   */
   get interval () {
     const frequency = (this._interval === 'week' && this._interval_count === 2) ? '2weeks' : this._interval;
 
+    // CAS 4: Abonnement canceled/expired → Pas de facturation future
+    if (this._subscription.status === 'canceled' || this._subscription.status === 'incomplete_expired') {
+      return {
+        frequency,
+        start: this.billing_cycle_anchor,
+        count: this._interval_count,
+        dayOfWeek: +this._subscription.metadata.dayOfWeek,
+        nextBilling: null
+      };
+    }
+
+    // CAS 1,2,3,5: Calcul de la prochaine facturation basé sur current_period_end
     // La source la plus fiable pour la prochaine facture est `current_period_end`.
     // Stripe calcule cette date pour nous, en tenant compte de l'ancre de facturation, des périodes d'essai, etc.
     let nextBilling = new Date(this._subscription.current_period_end * 1000);
 
-    // Si l'abonnement est en pause, la prochaine facturation aura lieu à la date de reprise ou après.
+    // CAS 2: Si l'abonnement est en pause avec une limite, la prochaine facturation aura lieu à la date de reprise ou après.
     const pauseResumeTimestamp = this._subscription.pause_collection?.resumes_at;
     if (pauseResumeTimestamp) {
       const resumeDate = new Date(pauseResumeTimestamp * 1000);
@@ -182,32 +219,108 @@ export class SubscriptionContract {
     return this._subscription.metadata.env||'';
   }
 
+  /**
+   * Retourne les informations du dernier PaymentIntent de l'abonnement
+   * 
+   * PROBLÈMES POTENTIELS DE CHARGEMENT :
+   * 1. SubscriptionContract.list() ne charge pas latest_invoice (pas d'expand)
+   * 2. SubscriptionContract.listAllPatreon() ne charge pas latest_invoice 
+   * 3. Constructeur peut recevoir subscription sans latest_invoice expandé
+   * 
+   * CAS DE FIGURES :
+   * - latest_invoice non chargé → return null
+   * - latest_invoice sans payment_intent → return null
+   * - latest_invoice avec payment_intent valide → return objet complet
+   * 
+   * @returns {Object|null} PaymentIntent info ou null si non disponible
+   */
   get latestPaymentIntent() {
-    const invoice = (this._subscription.latest_invoice || this._subscription) as Stripe.Invoice;
-    if(!invoice.payment_intent) {
+    // CAS 1: latest_invoice non chargé (list/search sans expand)
+    if (!this._subscription.latest_invoice) {
+      // console.warn(`SubscriptionContract.latestPaymentIntent: latest_invoice non chargé pour subscription ${this._subscription.id}`);
       return null;
     }
-    const paymentIntent = invoice.payment_intent as Stripe.PaymentIntent
-    return {source:paymentIntent.payment_method, status:paymentIntent.status,id:paymentIntent.id,client_secret:paymentIntent.client_secret};
+
+    // CAS 2: latest_invoice est juste un ID string au lieu d'un objet
+    // FIXME this should throw an error
+    if (typeof this._subscription.latest_invoice === 'string') {
+      console.warn(`SubscriptionContract.latestPaymentIntent: latest_invoice est un ID (${this._subscription.latest_invoice}), pas un objet expandé`);
+      return null;
+    }
+
+    const invoice = this._subscription.latest_invoice as Stripe.Invoice;
+    
+    // CAS 3: latest_invoice sans payment_intent
+    if (!invoice.payment_intent) {
+      // Normal pour certains types d'abonnements (trial, future avec SetupIntent, etc.)
+      return null;
+    }
+
+    // CAS 4: payment_intent est un ID string au lieu d'un objet
+    if (typeof invoice.payment_intent === 'string') {
+      console.warn(`SubscriptionContract.latestPaymentIntent: payment_intent est un ID (${invoice.payment_intent}), pas un objet expandé`);
+      return null;
+    }
+
+    // CAS 5: payment_intent correctement expandé
+    const paymentIntent = invoice.payment_intent as Stripe.PaymentIntent;
+    return {
+      source: paymentIntent.payment_method, 
+      status: paymentIntent.status,
+      id: paymentIntent.id,
+      client_secret: paymentIntent.client_secret
+    };
   }
 
-  //
-  // https://stripe.com/docs/api/subscriptions/object#subscription_object-status
+  /**
+   * Retourne le statut de l'abonnement avec normalisation pour l'interface utilisateur
+   * 
+   * SCÉNARIOS ET LOGIQUE DE STATUS :
+   * 
+   * 1. ABONNEMENT EN PAUSE (pause_collection défini)
+   *    → Retourne 'paused' (priorité sur le status Stripe)
+   *    → Facturation suspendue manuellement par l'utilisateur ou l'admin
+   * 
+   * 2. ABONNEMENT ACTIF (status: 'active')
+   *    → Retourne 'active' 
+   *    → Paiements fonctionnels, facturation régulière
+   * 
+   * 3. ABONNEMENT EN PÉRIODE D'ESSAI (status: 'trialing')
+   *    → Retourne 'trialing'
+   *    → Pas de facturation pendant la période d'essai
+   * 
+   * 4. ABONNEMENT ANNULÉ (status: 'canceled')
+   *    → Retourne 'canceled'
+   *    → Aucune facture future, accès arrêté
+   * 
+   * 5. PROBLÈMES DE PAIEMENT (status: 'incomplete', 'unpaid', 'past_due', 'incomplete_expired')
+   *    → Retourne 'incomplete' (normalisation)
+   *    → Nécessite intervention utilisateur pour méthode de paiement
+   *    → Voir metadata.acceptUnpaid pour gestion des factures impayées
+   * 
+   * @returns {string} Status normalisé pour l'interface utilisateur
+   * @see https://stripe.com/docs/api/subscriptions/object#subscription_object-status
+   */
   get status () { 
+    // SCÉNARIO 1: Pause manuelle prioritaire sur status Stripe
     if(this._subscription.pause_collection) {
       return 'paused';
     }
-    //
-    // canceled or paused, incomplete, incomplete_expired, trialing, active, past_due, unpaid.
+    
+    // SCÉNARIOS 2,3,4,5: Normalisation des status Stripe
+    // Status possibles: canceled, paused, incomplete, incomplete_expired, trialing, active, past_due, unpaid
     const stripeStatus = this._subscription.status.toString();
     switch(stripeStatus){
-      case "incomplete":
-      case "unpaid":
-      case "incomplete_expired":
-      case "past_due":
-      return "incomplete";
+      // SCÉNARIO 5: Tous les problèmes de paiement → 'incomplete' normalisé
+      case "incomplete":      // Paiement initial échoué ou en attente
+      case "unpaid":          // Factures impayées après retry
+      case "incomplete_expired": // Paiement initial expiré sans succès  
+      case "past_due":        // Facture en retard de paiement
+        return "incomplete";
+      
+      // SCÉNARIOS 2,3,4: Conservation du status Stripe original
       default:
-      return stripeStatus;
+        return stripeStatus; // 'active', 'trialing', 'canceled'
     } 
   }
   get content ():Subscription { 
@@ -231,6 +344,7 @@ export class SubscriptionContract {
       services: this.serviceItems,
       plan:this._subscription.metadata.plan||"service",
       latestPaymentIntent:this.latestPaymentIntent,
+      acceptUnpaid:this.acceptUnpaid,
       description,
       paymentMethod: this.paymentMethod
     }
@@ -282,6 +396,19 @@ export class SubscriptionContract {
     return this._subscription.metadata.payment_credit;
   }
 
+  /**
+   * Retourne le nombre de factures impayées acceptées avant suspension
+   * 
+   * @returns {number|undefined} 
+   *   - undefined : Comportement Stripe par défaut
+   *   - 0 : Suspension immédiate si paiement échoue  
+   *   - N > 0 : Accepte N factures impayées avant suspension
+   */
+  get acceptUnpaid() {
+    const value = this._subscription.metadata.acceptUnpaid;
+    return value ? parseInt(value.toString()) : undefined;
+  }
+
   //
   // configure the billing cycle anchor to fixed dates (for example, the 1st of the next month).
   // For example, a customer with a monthly subscription set to cycle on the 2nd of the 
@@ -320,6 +447,10 @@ export class SubscriptionContract {
   //   );
   // }
 
+  //
+  // find one item by sku (service, shipping, product,)
+  // item.metadata.type = 'product' |'service' | 'shipping'
+  // item.metadata.sku  = '1234' |'service'  | 'shipping' 
   findOneItem(sku){
     const items = this._subscription.items.data||[];
     return items.find(item=> item.metadata.sku == sku);
@@ -482,6 +613,15 @@ export class SubscriptionContract {
     return this;
   }
 
+  /**
+   * Crée un SubscriptionContract à partir d'un webhook Stripe
+   * 
+   * NOTE: Les webhooks Stripe incluent généralement l'objet subscription complet,
+   * mais latest_invoice.payment_intent pourrait ne pas être expandé selon le type d'événement.
+   * 
+   * @param {Stripe.Subscription} stripe - Objet subscription du webhook
+   * @returns {SubscriptionContract} Instance du contrat
+   */
   static fromWebhook(stripe) {
     return new SubscriptionContract(stripe); 
   }
@@ -498,7 +638,13 @@ export class SubscriptionContract {
       //
       // create metadata karibou model
       // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
-      const metadata:any = { uid:customer.uid, plan:'patreon' };
+      const metadata:any = { 
+        uid:customer.uid, 
+        plan:'patreon',
+        // TODO: Gestion des factures impayées pour abonnements patreon
+        // acceptUnpaid: undefined (pas de factures automatiques pour patreon)
+        acceptUnpaid: undefined 
+      };
 
       //
       // avoid webhook
@@ -558,20 +704,20 @@ export class SubscriptionContract {
       } as Stripe.SubscriptionCreateParams;
 
       //
-      // payment method
-      // use invoice default_pament_method for Stripe 
+      // payment method configuration
       if(card.issuer=="invoice") {
+        // ✅ Invoice payment (fallback interne): Le paramètre 'card' est utilisé ici
+        // ⚠️ ATTENTION: Ne passe pas par Stripe, paiement manuel
         metadata.payment_credit='invoice';
         options.payment_behavior = 'allow_incomplete';
         options.payment_settings = {}
-      } else if (subscriptionOptions.useCustomerDefaultPaymentMethod) {
+      } else {
+        // ✅ SOLUTION: Customer Default Payment Method Strategy (Stripe v11.18.0 compatible)
+        // 🎯 IMPORTANT: Le paramètre 'card' est IGNORÉ ici - utilise customer.invoice_settings.default_payment_method
+        // Note: customer.invoice_settings.default_payment_method is managed in customer.addMethod()
+        // automatic_payment_methods n'est PAS supporté pour les subscriptions, même en v11.18.0+
         options.payment_behavior = 'default_incomplete';
         options.expand = ['latest_invoice.payment_intent'];
-      } else {
-        options.payment_behavior = 'default_incomplete';
-        options.payment_settings = { save_default_payment_method: 'on_subscription' };
-        options.default_payment_method=unxor(card.id);
-        options.expand = ['latest_invoice.payment_intent']
       }
 
       //
@@ -632,7 +778,12 @@ export class SubscriptionContract {
   //   https://stripe.com/docs/billing/subscriptions/multiple-products#multiple-subscriptions-for-a-customer
   //   note: use the same billing_cycle_anchor for the same customer
   /**
+   * @param customer - Customer Stripe avec default_payment_method configuré
+   * @param card - ⚠️ UNIQUEMENT pour paiements "invoice" (fallback interne). Pour les paiements Stripe normaux, utilise customer.invoice_settings.default_payment_method
    * @param interval - DEPRECATED: This will be moved into subscriptionOptions in a future version.
+   * @param start_from - 'now' pour démarrage immédiat ou Date pour billing_cycle_anchor futur
+   * @param cartItems - Items de l'abonnement
+   * @param subscriptionOptions - Options de configuration (shipping, dayOfWeek, fees, plan)
    */
   static async create(customer:Customer, card:KngPaymentSource, interval:SchedulerItemFrequency, start_from,  cartItems:CartItem[], subscriptionOptions) {
     
@@ -640,7 +791,8 @@ export class SubscriptionContract {
     // timestamp: must be an integer Unix timestamp [getTime()/1000]
     assert(start_from=='now' || (start_from && start_from.getTime()));
 
-    const {shipping, dayOfWeek, fees, plan, useCustomerDefaultPaymentMethod} = subscriptionOptions;
+    const {shipping, dayOfWeek, fees, plan} = subscriptionOptions;
+    // ❌ SUPPRIMÉ: useCustomerDefaultPaymentMethod (automatic_payment_methods always enabled)
     assert(fees>=0)
     const _method = 'create'+customer.id;
     lock(_method);
@@ -711,7 +863,7 @@ export class SubscriptionContract {
         shipping
       }
 
-      const {items, contractShipping } = await createContractItemsForShipping(null,cartServices, cartItems, itemsOptions);
+      const {items, contractShipping } = await createContractItemsForShipping(cartServices, cartItems, itemsOptions);
 
       //
       // be sure
@@ -721,7 +873,33 @@ export class SubscriptionContract {
       // create metadata karibou model
       // https://github.com/karibou-ch/karibou-api/wiki/1.4-Paiement-par-souscription
       const metadataPlan = plan ||((cartItems.length)?'customer':'service');
-      const metadata:any = { uid:customer.uid, fees,plan: metadataPlan};
+      const metadata:any = { 
+        uid:customer.uid, 
+        fees,
+        plan: metadataPlan,
+        /**
+         * TODO: Implémentation gestion factures impayées
+         * 
+         * acceptUnpaid: Nombre de factures impayées acceptées avant suspension
+         * 
+         * VALEURS POSSIBLES :
+         * - undefined : Comportement Stripe par défaut (suspend après échec)
+         * - 0 : Aucune facture impayée acceptée (suspension immédiate)
+         * - N > 0 : Accepte N factures impayées avant suspension
+         * 
+         * LOGIQUE BUSINESS :
+         * - Si acceptUnpaid > 0 : Stripe continue de créer des factures même si les précédentes sont impayées
+         * - Les factures seront payées quand la méthode de paiement sera mise à jour
+         * - Permet de maintenir l'accès au service temporairement
+         * 
+         * IMPLÉMENTATION FUTURE :
+         * - Ajouter paramètre acceptUnpaid dans options de création d'abonnement
+         * - Configurer payment_settings.payment_method_options selon acceptUnpaid
+         * - Gérer la logique de suspension/réactivation automatique
+         * - Webhooks pour notifier les factures impayées accumulées
+         */
+        acceptUnpaid: undefined  // Valeur par défaut : comportement Stripe standard
+      };
 
       //
       // use clean shipping with price included
@@ -772,42 +950,24 @@ export class SubscriptionContract {
       }else {
         //
         // start from generate a setup_intents instead of payment_intents
-        //options.billing_cycle_anchor = (start_from.getTime()/1000)|0;
+        options.billing_cycle_anchor = (start_from.getTime()/1000)|0;
       }
 
       //
-      // payment method
-      // use invoice default_pament_method for Stripe 
+      // payment method configuration
       if(card.issuer=="invoice") {
+        // ✅ Invoice payment (fallback interne): Le paramètre 'card' est utilisé ici
+        // ⚠️ ATTENTION: Ne passe pas par Stripe, paiement manuel
         metadata.payment_credit='invoice';
         options.payment_behavior = 'allow_incomplete';
         options.payment_settings = {}
-      } else if (useCustomerDefaultPaymentMethod) {
-        //
-        // Let Stripe use the customer's default payment method.
-        // The customer must have a default payment method set in their account.
-        //
-        // WARNING: When this option is used, the subscription can be created
-        // with a status of 'incomplete' if the customer has no default
-        // payment method or if the payment fails. The client application
-        // MUST handle the following statuses:
-        // - 'incomplete': The subscription is awaiting payment. The client must
-        //   guide the user to the invoice payment page.
-        // - 'incomplete_expired': The payment was not completed in time (23h).
-        //   The subscription is void and a new one must be created.
-        //
+      } else {
+        // ✅ SOLUTION: Customer Default Payment Method Strategy (Stripe v11.18.0 compatible)
+        // 🎯 IMPORTANT: Le paramètre 'card' est IGNORÉ ici - utilise customer.invoice_settings.default_payment_method
+        // Note: customer.invoice_settings.default_payment_method is managed in customer.addMethod()
+        // automatic_payment_methods n'est PAS supporté pour les subscriptions, même en v11.18.0+
         options.payment_behavior = 'default_incomplete';
         options.expand = ['latest_invoice.payment_intent'];
-
-      } else {
-
-        //
-        // default_payment_method [4], then you can use different payment_behavior (allow_incomplete) to allow an initial 
-        // payment attempt immediately and handle potential actions only, if required.
-        options.payment_behavior = 'default_incomplete';
-        options.payment_settings = { save_default_payment_method: 'on_subscription' };
-        options.default_payment_method=unxor(card.id);
-        options.expand = ['latest_invoice.payment_intent']
       }
 
       //
@@ -876,16 +1036,21 @@ export class SubscriptionContract {
   // update the contract with  karibou cart items
   // replaces the previous contract with the new items and price 
   // https://stripe.com/docs/billing/subscriptions/upgrade-downgrade
+  // Special product information (sku, fees, type="product", *deleted*)
   async update(upItems: CartItem[], subscriptionOptions) {
     const _method = 'updateContract'+upItems.length;
     lock(_method);
 
-    const {shipping, dayOfWeek, fees} = subscriptionOptions;
+    let {shipping, dayOfWeek, fees} = subscriptionOptions;
     assert(fees>=0)
     
     try{
       
       // 1. update all the contract
+      const shippingFeesFromContract = this.content.services.find(service => service.id =='shipping');
+      shipping = shipping || this.shipping;
+      dayOfWeek = dayOfWeek || this.content.dayOfWeek;
+      shipping.price = shipping.price|| shippingFeesFromContract?.fees || 0;
 
       //
       // validate fees range [0..1]
@@ -895,17 +1060,18 @@ export class SubscriptionContract {
       // in case of shipping
       // shipping price is mandatory to compute the total price
       if(shipping) {
-        assert(shipping.price>=0);
         assert(dayOfWeek>=0);
       }
 
       //
       // filter items for services or products
+      // DEPRECATED items always have a sku and cartServices equal []
       const cartServices = upItems.filter(item => !item.sku);
       let cartItems = upItems.filter(item => !!item.sku);
 
       //
       // check available items for update
+      // FIXME: this should be done by createContractItemsForShipping
       if(!cartItems.length) {
         cartItems = this.content.items.map(item => {
           const cartItem = Object.assign({}, item, {frequency:this.interval.frequency,price:item.fees,finalprice:item.fees}) as unknown as CartItem;
@@ -913,7 +1079,7 @@ export class SubscriptionContract {
         });
       }
 
-      if(!shipping && cartItems.length){
+      if(!shipping){
         throw new Error("Shipping address is mandatory with products");      
       }
 
@@ -943,10 +1109,11 @@ export class SubscriptionContract {
         invoice:!!this.paymentCredit, 
         interval:this.interval.frequency,
         serviceFees:fees,
-        shipping
+        shipping,
+        updateContract:this
       }
 
-      const {items, servicePrice, contractShipping } = await createContractItemsForShipping(this,cartServices, cartItems, itemsOptions);
+      const {items, contractShipping } = await createContractItemsForShipping(cartServices, cartItems, itemsOptions);
 
       const metadata = this._subscription.metadata;
 
@@ -1096,7 +1263,12 @@ export class SubscriptionContract {
       throw new Error("Subscription list params error");
     }
     // constraint subscription by date {created: {gt: Date.now()}}
-    const subscriptions:Stripe.ApiList<Stripe.Subscription> = await $stripe.subscriptions.list(options);
+    // ✅ CORRECTION: Ajouter expand pour latest_invoice.payment_intent
+    const optionsWithExpand = {
+      ...options,
+      expand: ['data.latest_invoice.payment_intent']
+    };
+    const subscriptions:Stripe.ApiList<Stripe.Subscription> = await $stripe.subscriptions.list(optionsWithExpand);
 
     //
     // wrap stripe subscript to karibou 
@@ -1107,6 +1279,8 @@ export class SubscriptionContract {
   static async listAllPatreon() {
     const query = {
       query: 'status:\'active\' AND metadata[\'plan\']:\'patreon\'',
+      // ✅ CORRECTION: Ajouter expand pour charger latest_invoice.payment_intent
+      expand: ['data.latest_invoice.payment_intent']
     }
     // constraint subscription by date {created: {gt: Date.now()}}
     const subscriptions:Stripe.ApiSearchResult<Stripe.Subscription> = await $stripe.subscriptions.search(query);
@@ -1126,9 +1300,11 @@ export class SubscriptionContract {
 
 //
 // prepare items for shipping, service or others
-async function createContractItemsForShipping(contract, cartServices, cartItems, options) {
-    const isInvoice = options.invoice;
+async function createContractItemsForShipping(cartServices, cartItems, options) {
+  const contract = options.updateContract;// for update current contract with new items
+  const isInvoice = options.invoice;
 
+    //
     // check is subscription must be updated or created
     for(let item of cartItems) {
       if(item.product) {
@@ -1136,76 +1312,80 @@ async function createContractItemsForShipping(contract, cartServices, cartItems,
       }
       item.product = await findOrCreateProductFromItem(item);
     }
-    // group items by interval, day, week, month
-    const items = createItemsFromCart(cartItems,options.interval,isInvoice);
-
     //
+    // group items by interval, day, week, month
+    const stripeItems = createItemsFromCart(cartItems,options.interval,isInvoice);
+
+    // 
     // compute service serviceFees
+    // from input cartItems and contract.items (AND avoid multiple items with same SKU)
+    // FIXME: merged items with live contract is made by contract.update(...)
     const servicePrice = cartItems.filter(item => !item.deleted).reduce((sum, item) => {
       return sum + (item.price * item.quantity * (options.serviceFees));
-    }, 0)
+    }, 0);
+
+    // 
+    // FIXME: merged items with live contract is made by contract.update(...)
+    // Compute service fees from existing contract.items
+    // const contractItems = contract?.items.filter(item => !cartItems.some(cartItem => cartItem.sku==item.sku))||[];
+    // const servicePrice = servicePriceFromCart + contractItems.reduce((sum, item) => {
+    //   return sum + (item.price * item.quantity * (options.serviceFees));
+    // }, 0);
+
+
+
+    //
+    // UPDATE the service item (to avoid multiple service items)
+    // 'service' means fees X % for karibou.ch
+    // FIXME: investigate how to use stripe to specify a product fees (X %)
+    const stripeServiceItemToUpdate = contract?.findOneItem('service'); 
+    const stripeShippingItemToUpdate = contract?.findOneItem('shipping');
+    // console.log('⚠️  stripeServiceItemToUpdate',stripeServiceItemToUpdate?.id,stripeServiceItemToUpdate);
+    // console.log('⚠️  stripeShippingItemToUpdate',stripeShippingItemToUpdate?.id,stripeShippingItemToUpdate?.metadata);
 
     //
     // create items for service fees and shipping
-    if(cartItems.length&&servicePrice>=0) {
+    // ⚠️ mean that some items are not service fees (shipping, patreon, etc.)
+    if(servicePrice>0) {
       const item = {
         id:'service',
         title:'karibou.ch',
         price:round1cts(servicePrice),
         quantity:1        
       }
-
-      // check is subscription must be updated or created
-      let product, stripe_id;
-      if (contract){
-        const stripeItem = contract.findOneItem('service','karibou.ch');        
-        product = stripeItem.price.product;
-        stripe_id = stripeItem.id;
-      }
-
-      const itemService:any = await findOrCreateItemService(product,item,options.interval, isInvoice);
-      (stripe_id) && (itemService.id = stripe_id);
-      items.push(itemService);  
+      const itemService:any = await findOrCreateItemService(stripeServiceItemToUpdate?.price.product,item,options.interval, isInvoice);
+      (stripeServiceItemToUpdate) && (itemService.id = stripeServiceItemToUpdate.id);
+      // add item to stripeItems
+      stripeItems.push(itemService);  
     }
-    // check for delete item
-    else{
-      let product, stripe_id;
-      if (contract){
-        const stripeItem = contract.findOneItem('service','karibou.ch');        
-        stripe_id = stripeItem.id;
-      }
-      if(stripe_id){
-        const itemService:any = {id:stripe_id,deleted:true};
-        items.push(itemService);    
-      }
+    //
+    // DELETE service item when others items are NOT sku (as shipping, patreon, ...)
+    else if(stripeServiceItemToUpdate){
+      const itemService:any = {id:stripeServiceItemToUpdate.id,deleted:true};
+      stripeItems.push(itemService);    
     }
 
     //
+    // DEPRECATED
     // create items for service only
-    if(cartServices.length) {
-      for(let elem of cartServices) {
-        const item = {
-          id:(elem.sku||elem.id),
-          title:elem.title,
-          price:elem.price,
-          quantity:elem.quantity        
-        }  
+    // ⚠️ EXPLAIN THE PURPOSE OF THIS CODE ⤵
+    // if(cartServices.length) {
+    //   for(let elem of cartServices) {
+    //     const item = {
+    //       id:(elem.sku||elem.id),
+    //       title:elem.title,
+    //       price:elem.price,
+    //       quantity:elem.quantity        
+    //     }  
 
-        // check is subscription must be updated or created
-        let product, stripe_id;
-        if (contract){
-          const stripeItem = contract.findOneItem('service');        
-          product = stripeItem.price.product;
-          stripe_id = stripeItem.id;
-        }
+    //     // check is subscription must be updated or created
+    //     const itemService:any = await findOrCreateItemService(stripeServiceItemToUpdate?.price.product,item,options.interval, isInvoice);
+    //     (stripeServiceItemToUpdate) && (itemService.id = stripeServiceItemToUpdate.id);
+    //     (elem.deleted) && (itemService.deleted = true);
+    //     stripeItems.push(itemService);  
+    //   }
 
-        const itemService:any = await findOrCreateItemService(product,item,options.interval, isInvoice);
-        (stripe_id) && (itemService.id = stripe_id);
-        (elem.deleted) && (itemService.deleted = true);
-        items.push(itemService);  
-      }
-
-    }  
+    // }  
 
     //
     // create shipping item
@@ -1223,21 +1403,14 @@ async function createContractItemsForShipping(contract, cartServices, cartItems,
         price:contractShipping.price,
         quantity:1        
       }
-      // check is subscription must be updated or created
-      let product, stripe_id;
-      if (contract){
-        const stripeItem = contract.findOneItem('shipping');        
-        product = stripeItem.price.product;
-        stripe_id = stripeItem.id;
-      }
 
 
-      const itemShipping:any = await findOrCreateItemService(product,item,options.interval, isInvoice);
-      (stripe_id) && (itemShipping.id = stripe_id);
-      items.push(itemShipping);
+      const itemShipping:any = await findOrCreateItemService(stripeShippingItemToUpdate?.price.product,item,options.interval, isInvoice);
+      (stripeShippingItemToUpdate) && (itemShipping.id = stripeShippingItemToUpdate.id);
+      stripeItems.push(itemShipping);
     }
 
-    return { items , servicePrice, contractShipping};
+    return { items:stripeItems , servicePrice, contractShipping};
 }
 
 //
@@ -1313,7 +1486,7 @@ async function findOrCreateItemService(product,item, interval, isInvoice) {
     type:"service",
     title,
     quantity,
-    fees: (price).toFixed(2),
+    fees: round1cts(price).toFixed(2),
   }
 
   return {metadata, quantity,price_data:serviceItem};
