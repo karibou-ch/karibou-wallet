@@ -246,7 +246,10 @@ export class Webhook {
 
     
           transactions = await customer.listBalanceTransactions(2);
-        }catch(err) {}
+        }catch(err) {
+          // Retourner l'erreur pour investigation
+          return { event: event.type ,testing: false, customer: null, error: err.message} as WebhookStripe;
+        }
 
         return { event: event.type ,testing: false, customer, error:false} as WebhookStripe;
       }

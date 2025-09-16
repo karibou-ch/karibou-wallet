@@ -318,6 +318,9 @@ export class Customer {
         stripe.metadata
       ); 
       await customer.listMethods();
+      
+      // ✅ CORRECTION BUG: Retourner l'objet customer créé
+      return customer;
   
     }catch(err){
       throw parseError(err);
