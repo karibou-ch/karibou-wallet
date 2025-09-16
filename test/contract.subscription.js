@@ -117,6 +117,11 @@ describe("Class subscription.creation", function(){
     defaultSub.content.items.length.should.equal(2);
     defaultSub.content.services.length.should.equal(2);
 
+    // ✅ CHECK: Vérifier que content.latestPaymentIntent est accessible (latest_invoice bien expandé)
+    should.exist(defaultSub.content.latestPaymentIntent);
+    defaultSub.content.latestPaymentIntent.should.be.type('object');
+    should.exist(defaultSub.content.latestPaymentIntent.status);
+
     should.not.exist(defaultSub.content.shipping.price);
 
     defaultSub.content.items.forEach(item => {

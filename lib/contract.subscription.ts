@@ -941,7 +941,8 @@ export class SubscriptionContract {
         description,
         proration_behavior:'none',
         items:items,
-        metadata 
+        metadata,
+        expand: ['latest_invoice.payment_intent']
       } as Stripe.SubscriptionCreateParams;
 
       // 3 days before the 1st tuesday of the next week/month    
@@ -967,7 +968,6 @@ export class SubscriptionContract {
         // Note: customer.invoice_settings.default_payment_method is managed in customer.addMethod()
         // automatic_payment_methods n'est PAS supporté pour les subscriptions, même en v11.18.0+
         options.payment_behavior = 'default_incomplete';
-        options.expand = ['latest_invoice.payment_intent'];
       }
 
       //
@@ -1191,6 +1191,11 @@ export class SubscriptionContract {
   * @returns a Contract instance with all context data in memory
   */
    static async get(id) {
+    
+    // ✅ CORRECTION BUG CRITIQUE: Vérifier que id n'est pas null/undefined
+    if (!id || typeof id !== 'string') {
+      throw new Error('Subscription ID is required and must be a string');
+    }
 
     // use the stripe id
     id = id.indexOf('sub_')>-1? id: unxor(id);
