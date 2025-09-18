@@ -89,7 +89,9 @@ export class Webhook {
 
         //
         // verify if payment method muste be updated
-        const contract = await SubscriptionContract.get(invoice.subscription);
+        // Support both old and new Stripe API structure
+        const subscriptionId = invoice.subscription || (invoice as any).parent?.subscription_details?.subscription;
+        const contract = await SubscriptionContract.get(subscriptionId);
         const testing = (contract.environnement == 'test')
         if(testing) {
           return { event: event.type,testing, error:false};
@@ -142,7 +144,9 @@ export class Webhook {
       // send customer e-mail with confirmation requested
       if(event.type == 'invoice.payment_action_required') {
         const invoice = event.data.object as Stripe.Invoice;
-        const contract = await SubscriptionContract.get(invoice.subscription);        
+        // Support both old and new Stripe API structure
+        const subscriptionId = invoice.subscription || (invoice as any).parent?.subscription_details?.subscription;
+        const contract = await SubscriptionContract.get(subscriptionId);        
         const testing = (contract.environnement == 'test')
         if(testing) {
           return { event: event.type,testing,contract, error:false};
@@ -163,7 +167,9 @@ export class Webhook {
       // send customer e-mail payment method 
       if(event.type == 'invoice.payment_failed') {
         const invoice = event.data.object as Stripe.Invoice;
-        const contract = await SubscriptionContract.get(invoice.subscription);        
+        // Support both old and new Stripe API structure
+        const subscriptionId = invoice.subscription || (invoice as any).parent?.subscription_details?.subscription;
+        const contract = await SubscriptionContract.get(subscriptionId);        
         const testing = (contract.environnement == 'test')
         if(testing) {
           return { event: event.type,testing, contract, error:false};
@@ -188,11 +194,13 @@ export class Webhook {
 
         //
         // be sure that invoice concerne a subscription
-        if(!invoice.subscription) {
+        // Support both old and new Stripe API structure
+        const subscriptionId = invoice.subscription || (invoice as any).parent?.subscription_details?.subscription;
+        if(!subscriptionId) {
           return { event: event.type ,error:false} as WebhookStripe;  
         }
 
-        const contract = await SubscriptionContract.get(invoice.subscription);
+        const contract = await SubscriptionContract.get(subscriptionId);
         //
         // be sure of env
         const testing = (contract.environnement == 'test')
