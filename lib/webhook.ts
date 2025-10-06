@@ -26,25 +26,28 @@ export class Webhook {
 
 
   /**
-  * ## retrieve Webhook.stripe(body)
-  * Get stripe objects from webhook data
-  * https://stripe.com/docs/webhooks
-  * @returns {WebhookStripe } 
-  */
+   * ## retrieve Webhook.stripe(body)
+   * Get stripe objects from webhook data
+   * https://stripe.com/docs/webhooks
+   * @param body - Request body
+   * @param sig - Stripe signature header
+   * @param mock - Optional mock object with {event?, content?}
+   * @returns {WebhookStripe}
+   */
    static async stripe(body, sig, mock?):Promise<WebhookStripe> {
 
-    // 
+    //
     // body = request.data
     // sig = request.headers['STRIPE_SIGNATURE']
     let event = body;
     try{
-      //
-      // testing webhook controller
-      if(mock && mock.content) {
-        return Object.assign({},mock.content||{},{mock:true});
+      // testing webhook controller - use mock event if provided
+      if(mock && mock.event) {
+        event = mock.event;
+      } else {
+        const webhookSecret = Config.option('webhookSecret');
+        event = $stripe.webhooks.constructEvent(body, sig, webhookSecret);
       }
-      const webhookSecret = Config.option('webhookSecret');
-      event = $stripe.webhooks.constructEvent(body, sig, webhookSecret);
     }catch(err){
       console.log(`⚠️  Webhook signature verification failed.`, err.message);
       throw err;
@@ -153,8 +156,12 @@ export class Webhook {
         }
 
 
-        const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
-        const transaction = await Transaction.get(xor(paymentIntent));
+        // ✅ FIX: Handle null payment_intent (subscription with no payment method)
+        let transaction;
+        if(invoice.payment_intent) {
+          const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
+          transaction = await Transaction.get(xor(paymentIntent));
+        }
         const customer = await contract.customer();
         //
         // set pending payment intent, customer have 23h to change payment method
@@ -176,8 +183,12 @@ export class Webhook {
         }
 
 
-        const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
-        const transaction = await Transaction.get(xor(paymentIntent));
+        // ✅ FIX: Handle null payment_intent (subscription with no payment method)
+        let transaction;
+        if(invoice.payment_intent) {
+          const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
+          transaction = await Transaction.get(xor(paymentIntent));
+        }
         const customer = await Customer.get(invoice.customer.toString());
 
         //
@@ -212,7 +223,7 @@ export class Webhook {
         // //
         // // case of invoice
         // if(contract.paymentCredit) {
-        // } 
+        // }
         //
         // case of stripe
         if(invoice.payment_intent) {
@@ -221,6 +232,18 @@ export class Webhook {
         else if(contract.content.latestPaymentIntent){
           const paymentIntentId = contract.content.latestPaymentIntent.id||contract.content.latestPaymentIntent;
           transaction = await Transaction.get(xor(paymentIntentId));
+        }
+        // ✅ FIX: For invoice.payment_succeeded, if no payment_intent in payload or contract,
+        // retrieve it from Stripe API since paid invoices should have a payment_intent
+        else {
+          try {
+            const fullInvoice = await $stripe.invoices.retrieve(invoice.id, {expand: ['payment_intent']});
+            if(fullInvoice.payment_intent) {
+              transaction = await Transaction.get(xor(fullInvoice.payment_intent.toString()));
+            }
+          } catch(err) {
+            console.warn(`⚠️ Could not retrieve payment_intent for invoice ${invoice.id}:`, err.message);
+          }
         }
 
         const customer = await Customer.get(invoice.customer.toString());
