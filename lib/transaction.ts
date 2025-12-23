@@ -101,7 +101,10 @@ export  class  Transaction {
     }
 
     const customer_credit = parseFloat(this._payment.metadata.customer_credit||'0');
-    if(this._payment.status == 'canceled' && customer_credit>0) {
+    // FIX: Distinguish manual cancellation (with credit = paid) from automatic cancellation (7-day expiry = voided)
+    // Automatic cancellations need to trigger _force_recapture, so they must return 'voided'
+    const automaticCancellation = this._payment.cancellation_reason == 'automatic';
+    if(this._payment.status == 'canceled' && customer_credit>0 && !automaticCancellation) {
       return 'paid';
     }
     //
@@ -478,31 +481,46 @@ export  class  Transaction {
       console.log('✅ forced recapture for cancelled transaction after 7 days: amount',amount);
 
       const payment = this._payment as Stripe.PaymentIntent;
-      const shipping = {
+      
+      // FIX: Handle optional shipping - can be null for some transactions
+      const shipping = payment.shipping ? {
         address: {
-          line1:payment.shipping.address.line1,
-          postal_code:payment.shipping.address.postal_code,
-          country:'CH'
+          line1: payment.shipping.address?.line1 || '',
+          postal_code: payment.shipping.address?.postal_code || '',
+          country: 'CH'
         },
-        name: payment.shipping.name
-      };
+        name: payment.shipping.name || ''
+      } : undefined;
   
+      // FIX: Create clean metadata without inherited customer_credit
+      // The customer_credit will be set separately after _force_recapture
+      const cleanMetadata: Record<string, string> = {
+        order: payment.metadata?.order || this.oid,
+        force_recapture: 'true',
+        original_payment: payment.id
+      };
 
-      // FIXME, CHF currency are not accepted for US cards.!! 
-      return $stripe.paymentIntents.create({
-        amount:Math.round(amount*100),
+      const params: Stripe.PaymentIntentCreateParams = {
+        amount: Math.round(amount * 100),
         currency: "CHF",
-        customer:(payment.customer as string),
+        customer: (payment.customer as string),
         payment_method: (payment.payment_method as string), 
-        payment_method_types : ['card'],
+        payment_method_types: ['card'],
         transfer_group: this.group,
         off_session: true,
-        capture_method:'automatic', 
-        confirm:true,
-        shipping: shipping,
+        capture_method: 'automatic', 
+        confirm: true,
         description: payment.description,
-        metadata: payment.metadata
-      });    
+        metadata: cleanMetadata
+      };
+
+      // FIX: Only add shipping if it exists
+      if (shipping) {
+        params.shipping = shipping;
+      }
+
+      // FIXME, CHF currency are not accepted for US cards.!! 
+      return $stripe.paymentIntents.create(params);    
     }
 
     //
@@ -564,6 +582,19 @@ export  class  Transaction {
         return this;
       }        
   
+      const cancelled = (this._payment.cancellation_reason == 'automatic');
+      // Force recapture bypasse les validations standard
+      // FIX: Deduct customer_credit from Stripe amount (credit is already reserved)
+      if(cancelled && this.status === "voided" as KngPaymentStatus) {
+        // Calculate Stripe portion only (exclude customer_credit which is already reserved)
+        const stripeAmount = round1cts(Math.max(0, amount - balanceAuthAmount));
+        console.log('🔄 Auto-cancelled transaction (>7 days), forcing recapture: stripeAmount', stripeAmount, 'customerCredit', balanceAuthAmount);
+        this._payment = await _force_recapture(stripeAmount);
+        // Preserve customer_credit in metadata for the new transaction
+        this._payment.metadata.customer_credit = Math.round(balanceAuthAmount * 100).toString();
+        return this;
+      }      
+
       //
       // amount test is done after the invoice case
       if(this.amount > 0 && amount > this.amount) {
@@ -682,7 +713,7 @@ export  class  Transaction {
       //
       // force recapture when the charge has expired
       // case of voided transaction after 7 days (the charge has expired)
-      // FIXME: missing test _force_recapture(amount) when tx.status is "voided"
+      // FIXME: remove this dead code
       else if(this._payment.cancellation_reason == 'automatic'){
         this._payment = await _force_recapture(amount);
       }
