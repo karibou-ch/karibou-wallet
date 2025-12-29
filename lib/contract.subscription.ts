@@ -268,7 +268,14 @@ export class SubscriptionContract {
       source: paymentIntent.payment_method, 
       status: paymentIntent.status,
       id: paymentIntent.id,
-      client_secret: paymentIntent.client_secret
+      client_secret: paymentIntent.client_secret,
+      // Informations additionnelles utiles
+      created: new Date(paymentIntent.created * 1000),
+      amount: paymentIntent.amount / 100,
+      currency: paymentIntent.currency,
+      invoiceId: invoice.id,
+      invoiceCreated: new Date(invoice.created * 1000),
+      invoiceStatus: invoice.status
     };
   }
 
@@ -418,34 +425,86 @@ export class SubscriptionContract {
   }
 
   get items():SubscriptionProductItem[]{
-    const elements = this._subscription.items.data.filter(item => item.metadata.type == 'product');
+    // ✅ FIX: Support metadata on item OR price (dashboard scenario)
+    const elements = this._subscription.items.data.filter(item => getItemType(item) == 'product');
     return elements.map(parseItem);
   }
 
   get serviceItems():SubscriptionServiceItem[]{
-    const elements = this._subscription.items.data.filter(item => item.metadata.type == 'service').map(parseServiceItem);
+    // ✅ FIX: Support metadata on item OR price (dashboard scenario)
+    const elements = this._subscription.items.data.filter(item => getItemType(item) == 'service').map(parseServiceItem);
     return elements;
   }
 
   get patreonItems():SubscriptionServiceItem[]{
-    const elements = this._subscription.items.data.filter(item => item.metadata.type == 'patreon').map(parseServiceItem);
+    // ✅ FIX: Support metadata on item OR price (dashboard scenario)
+    const elements = this._subscription.items.data.filter(item => getItemType(item) == 'patreon').map(parseServiceItem);
     return elements;
   }
 
-  //
-  // update the billing_cycle_anchor to now.
-  // UPDATE: to avoid days overlapping between shipping 
-  // and billing (shipping is ALWAYS made days or the week after billing)
-  // 
-  // DEPRECATED
-  // https://stripe.com/docs/billing/subscriptions/billing-cycle#changing
-  // async updateNextInvoiceDay() {
-  //   const customer = this._subscription.customer as string;
-  //   const subscription = await $stripe.subscriptions.update(
-  //     customer,
-  //     {billing_cycle_anchor: 'now', proration_behavior: 'none'}
-  //   );
-  // }
+  /**
+   * Réinitialise le cycle de facturation à une date spécifiée
+   * 
+   * Cette action :
+   * - Si toDate === 'now' : Met à jour l'ancrage de facturation à maintenant via billing_cycle_anchor
+   * - Si toDate est une Date future : Utilise trial_end pour déplacer l'ancrage à cette date
+   * - La prochaine facture sera générée selon le nouvel intervalle à partir de la date spécifiée
+   * - Utile pour réaligner les cycles de facturation après une pause
+   * 
+   * COMPORTEMENT STRIPE (trial_end pour date future) :
+   * > "Adding a trial (trial_end = <timestamp>) → Stripe sets the anchor date to the end of the trial"
+   * L'ancrage de facturation se retrouve automatiquement à la fin du trial.
+   * Aucune facture n'est générée pendant la période trial.
+   * 
+   * ATTENTION : 
+   * - Ne pas utiliser avec proration pour éviter des ajustements de prix
+   * - Utiliser avec prudence car cela modifie les dates de facturation
+   * - Une date future crée un "trial" pendant lequel le client n'est pas facturé
+   * 
+   * @param toDate - 'now' pour réinitialiser immédiatement, ou une Date future
+   * @throws {Error} Si toDate n'est pas fourni ou invalide
+   * @see https://stripe.com/docs/billing/subscriptions/billing-cycle#changing
+   * @see https://stripe.com/docs/billing/subscriptions/trials (trial_end anchor behavior)
+   * @returns {Promise<SubscriptionContract>} Le contrat mis à jour
+   */
+  async resetBillingCycle(toDate: Date | 'now') {
+    if (!toDate) {
+      throw new Error("resetBillingCycle requires a date ('now' or future Date)");
+    }
+
+    const updateParams: Stripe.SubscriptionUpdateParams = {
+      proration_behavior: 'none',
+      expand: ['latest_invoice.payment_intent']
+    };
+
+    if (toDate === 'now') {
+      // Réinitialisation immédiate via billing_cycle_anchor
+      // ⚠️ Si un trial est actif, il faut d'abord le terminer avec trial_end: 'now'
+      updateParams.billing_cycle_anchor = 'now';
+      updateParams.trial_end = 'now'; // Termine tout trial existant
+    } else {
+      // Validation de la date
+      if (!toDate.getTime || isNaN(toDate.getTime())) {
+        throw new Error("resetBillingCycle: invalid date provided");
+      }
+      
+      if (toDate.getTime() <= Date.now()) {
+        throw new Error("resetBillingCycle: future date required (use 'now' for immediate reset)");
+      }
+
+      // Date future → utiliser trial_end
+      // Stripe: "set the anchor date to the end of the trial"
+      updateParams.trial_end = Math.floor(toDate.getTime() / 1000);
+    }
+
+    this._subscription = await $stripe.subscriptions.update(
+      this._subscription.id,
+      updateParams
+    );
+
+    cache.set(this._subscription.id, this);
+    return this;
+  }
 
   //
   // find one item by sku (service, shipping, product,)
@@ -1215,7 +1274,10 @@ export class SubscriptionContract {
     }
 
     try{
-      const stripe = await $stripe.subscriptions.retrieve(id,{expand:['latest_invoice.payment_intent']}) as any;
+      // ✅ FIX: Expand product to support Dashboard scenario (product.name=SKU, product.description=title)
+      const stripe = await $stripe.subscriptions.retrieve(id,{
+        expand:['latest_invoice.payment_intent', 'items.data.price.product']
+      }) as any;
 
       //
       // expand payment_intent if needed
@@ -1256,9 +1318,12 @@ export class SubscriptionContract {
 
 
     // constraint subscription by date {created: {gt: Date.now()}}
+    // Note: 'data.items.data.price.product' would exceed 4 levels limit
+    // For full product info, use SubscriptionContract.get(id) instead
     const subscriptions:Stripe.ApiList<Stripe.Subscription> = await $stripe.subscriptions.list({
       status:'all',
-      customer:unxor(customer.id) , expand:['data.latest_invoice.payment_intent']
+      customer:unxor(customer.id),
+      expand:['data.latest_invoice.payment_intent']
     });
 
     const contracts = subscriptions.data.map(sub => new SubscriptionContract(sub));
@@ -1278,6 +1343,7 @@ export class SubscriptionContract {
     }
     // constraint subscription by date {created: {gt: Date.now()}}
     // ✅ CORRECTION: Ajouter expand pour latest_invoice.payment_intent
+    // Note: 'data.items.data.price.product' exceeds 4 levels - use get() for full product info
     const optionsWithExpand = {
       ...options,
       expand: ['data.latest_invoice.payment_intent']
@@ -1294,6 +1360,7 @@ export class SubscriptionContract {
     const query = {
       query: 'status:\'active\' AND metadata[\'plan\']:\'patreon\'',
       // ✅ CORRECTION: Ajouter expand pour charger latest_invoice.payment_intent
+      // Note: 'data.items.data.price.product' exceeds 4 levels - use get() for full product info
       expand: ['data.latest_invoice.payment_intent']
     }
     // constraint subscription by date {created: {gt: Date.now()}}
@@ -1632,40 +1699,100 @@ function createItemsFromCart(cartItems:CartItem[], interval:SchedulerItemFrequen
 
 
 //
+// ✅ FIX: Helper to get item type from item.metadata OR price.metadata (dashboard scenario)
+// When subscription is created/modified in Stripe Dashboard, metadata may only be on Price
+function getItemType(item: Stripe.SubscriptionItem): string | undefined {
+  // Priority 1: item.metadata (set when creating via API with items[].metadata)
+  if (item.metadata?.type) {
+    return item.metadata.type;
+  }
+  // Priority 2: price.metadata (set when Price was created in dashboard with metadata)
+  if (item.price?.metadata?.type) {
+    return item.price.metadata.type as string;
+  }
+  return 'product';//fallback to default value
+}
+
+//
+// ✅ FIX: Helper to get metadata with fallback to price.metadata
+// Supports both inline price_data and persistent Price from dashboard
+function getItemMetadata(item: Stripe.SubscriptionItem): Stripe.Metadata {
+  const itemMeta = item.metadata || {};
+  const priceMeta = item.price?.metadata || {};
+  
+  // Merge: item.metadata takes priority, price.metadata as fallback
+  return {
+    ...priceMeta,  // Fallback values from Price
+    ...itemMeta    // Priority values from SubscriptionItem (overwrites if exists)
+  };
+}
+
+//
 // parse subscription Item
+// ✅ FIX: Support metadata on item OR price (dashboard scenario)
+// ✅ FIX: Deduce fees from unit_amount if not in metadata (dashboard scenario)
+// ✅ FIX: Fallback to product.name (SKU) and product.description (title) for Dashboard scenario
 function parseItem(item: Stripe.SubscriptionItem): SubscriptionProductItem {
+  const metadata = getItemMetadata(item);
+  
+  // ✅ Get product info if expanded (for Dashboard scenario fallback)
+  // product can be string (ID) or object (expanded)
+  const product = typeof item.price.product === 'object' ? item.price.product as Stripe.Product : null;
+  
+  // ✅ Deduce fees from unit_amount if not in metadata
+  // unit_amount is in cents, fees is in CHF
+  const fees = metadata.fees 
+    ? parseFloat(metadata.fees as string) 
+    : (item.price.unit_amount / 100);
+  
+  // ✅ SKU: Priority 1: metadata, Priority 2: product.name (Dashboard convention)
+  const sku = metadata.sku || (product?.name) || '';
+  
+  // ✅ Title: Priority 1: metadata, Priority 2: product.description (Dashboard convention)
+  // Note: product.description may contain "title(part)" format
+  const title = (metadata.title as string) || (product?.description) || '';
+  
   const result:SubscriptionProductItem = {
     id:item.id,
     unit_amount:item.price.unit_amount,
     currency:item.price.currency,
     quantity:(item.quantity),
-    fees:parseFloat(item.metadata.fees),
-    sku:item.metadata.sku,
-    title:item.metadata.title,
-    hub:item.metadata.hub,
-    note:item.metadata.note||'',
-    part:item.metadata.part
+    fees,
+    sku,
+    title,
+    hub:(metadata.hub as string) || '',
+    note:(metadata.note as string) || '',
+    part:(metadata.part as string) || ''
   };
   //
   // optional fields
-  ["variant"].filter(key => item[key]).forEach(key=> result[key]=item[key]);
+  if(metadata.variant){
+    result.variant = metadata.variant as string;
+  }
   return result;
 }
 
 //
 // parse subscription Item
+// ✅ FIX: Support metadata on item OR price (dashboard scenario)
+// ✅ FIX: Deduce fees from unit_amount if not in metadata
 function parseServiceItem(item: Stripe.SubscriptionItem):SubscriptionServiceItem {
+  const metadata = getItemMetadata(item);
+  
+  // ✅ Deduce fees from unit_amount if not in metadata
+  const fees = metadata.fees 
+    ? parseFloat(metadata.fees as string) 
+    : (item.price.unit_amount / 100);
+  
   const result:any = {
     unit_amount:item.price.unit_amount,
     currency:item.price.currency,
     quantity:(item.quantity),
-    id:item.metadata.sku||item.metadata.title
+    id:metadata.sku||metadata.title||'unknown',
+    fees
   };
-  if(item.metadata.title) {
-    result.title = item.metadata.title;
-  }
-  if(item.metadata.fees) {
-    result.fees = parseFloat(item.metadata.fees);
+  if(metadata.title) {
+    result.title = metadata.title;
   }
 
   return result;
