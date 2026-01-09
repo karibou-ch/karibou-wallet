@@ -643,7 +643,7 @@ export  class  Transaction {
         if(refundAmount < -0.01) {
           throw new Error(errorMsg);
         }
-        if(refundAmount < 0.02) {
+        if(refundAmount < 0.05) {
           this._payment.metadata.exended_status = null;
           this._payment = await $stripe.paymentIntents.update( this._payment.id , { 
             metadata:this._payment.metadata
