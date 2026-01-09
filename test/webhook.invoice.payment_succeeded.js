@@ -28,16 +28,16 @@ describe("Webhook: invoice.payment_succeeded", function() {
       karibouCustomerId: "12345"
     });
 
-    // Mock the Stripe API call to retrieve invoice with payment_intent
+    // Mock the Stripe API call to retrieve invoice (API Basil: payment_intent = string ID)
     const originalRetrieve = $stripe.invoices.retrieve;
-    $stripe.invoices.retrieve = async function(invoiceId, options) {
-      if (invoiceId === mocks.stripeApiMock.invoiceId && options?.expand?.includes('payment_intent')) {
+    $stripe.invoices.retrieve = async function(invoiceId) {
+      if (invoiceId === mocks.stripeApiMock.invoiceId) {
         return {
-          id: invoiceId,
-          payment_intent: mocks.stripeApiMock.paymentIntentId
+          ...mocks.event.data.object,
+          payment_intent: mocks.stripeApiMock.paymentIntentId  // string ID, not object
         };
       }
-      return originalRetrieve.call(this, invoiceId, options);
+      return originalRetrieve.call(this, invoiceId);
     };
 
     // Mock dependencies
@@ -90,16 +90,16 @@ describe("Webhook: invoice.payment_succeeded", function() {
       useParentSubscriptionDetails: true
     });
 
-    // Mock the Stripe API call to retrieve invoice with payment_intent
+    // Mock the Stripe API call to retrieve invoice (API Basil: payment_intent = string ID)
     const originalRetrieve = $stripe.invoices.retrieve;
-    $stripe.invoices.retrieve = async function(invoiceId, options) {
-      if (invoiceId === mocks.stripeApiMock.invoiceId && options?.expand?.includes('payment_intent')) {
+    $stripe.invoices.retrieve = async function(invoiceId) {
+      if (invoiceId === mocks.stripeApiMock.invoiceId) {
         return {
-          id: invoiceId,
-          payment_intent: mocks.stripeApiMock.paymentIntentId
+          ...mocks.event.data.object,
+          payment_intent: mocks.stripeApiMock.paymentIntentId  // string ID, not object
         };
       }
-      return originalRetrieve.call(this, invoiceId, options);
+      return originalRetrieve.call(this, invoiceId);
     };
 
     // Mock dependencies

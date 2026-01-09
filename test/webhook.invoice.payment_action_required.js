@@ -14,6 +14,7 @@ config.configure(options.payment);
 
 const customer = require("../dist/customer");
 const subscription = require("../dist/contract.subscription");
+const $stripe = require("../dist/payments").$stripe;
 const should = require('should');
 const { stripeSubscription } = require('./fixtures/webhook.stripe');
 
@@ -25,6 +26,15 @@ describe("Webhook: invoice.payment_action_required", function() {
       customerEmail: "mock-action-required@example.com",
       karibouCustomerId: "11111"
     });
+
+    // Mock the Stripe API call to retrieve invoice (API Basil: payment_intent = string ID)
+    const originalRetrieve = $stripe.invoices.retrieve;
+    $stripe.invoices.retrieve = async function(invoiceId) {
+      return {
+        ...mocks.event.data.object,
+        payment_intent: mocks.event.data.object.payment_intent  // string ID
+      };
+    };
 
     // Mock dependencies
     const webhook = require("../dist/webhook");
@@ -58,6 +68,7 @@ describe("Webhook: invoice.payment_action_required", function() {
       result.error.should.equal(false);
 
     } finally {
+      $stripe.invoices.retrieve = originalRetrieve;
       subscription.SubscriptionContract.get = originalSubscriptionContractGet;
       customer.Customer.get = originalCustomerGet;
       require("../dist/transaction").Transaction.get = originalTransactionGet;

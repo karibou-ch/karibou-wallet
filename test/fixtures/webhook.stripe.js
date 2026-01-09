@@ -3,6 +3,21 @@
  * @param {string} eventType - Type of webhook event
  * @param {object} options - Options for customizing the mock
  * @returns {object} Mock objects for testing
+ * 
+ * FIXME: Pour obtenir des payloads réels par version API Stripe, utiliser Stripe CLI :
+ * 
+ * 1. Mode écoute (forward vers localhost) :
+ *    $ stripe listen --forward-to localhost:3000/webhook
+ * 
+ * 2. Déclencher un événement spécifique :
+ *    $ stripe trigger invoice.payment_succeeded
+ *    $ stripe trigger invoice.payment_failed
+ * 
+ * 3. Avec version API spécifique :
+ *    $ stripe trigger invoice.payment_succeeded --api-version 2025-08-27.basil
+ * 
+ * Cela permet de capturer les vrais payloads webhook par version API.
+ * Note: API "Basil" (2025-08-27+) → payment_intent supprimé du payload invoice.*
  */
 function stripeSubscription(eventType, options = {}) {
   const baseInvoice = {
