@@ -54,35 +54,44 @@ export class Webhook {
     }
 
     //
-    // all events for subscription https://stripe.com/docs/billing/subscriptions/webhooks
+    // ══════════════════════════════════════════════════════════════════════════════
+    // STRIPE WEBHOOKS - Subscription & Payment Events
+    // ══════════════════════════════════════════════════════════════════════════════
+    // Docs: https://stripe.com/docs/billing/subscriptions/webhooks
+    // Lifecycle: https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
     //
-    // *** Lifecycle ***
-    // - https://stripe.com/docs/billing/subscriptions/overview#subscription-lifecycle
+    // ⚠️ API BASIL (2025+): invoice.payment_intent supprimé du payload webhook
+    // Solution: Récupérer invoice via API → $stripe.invoices.retrieve(id)
     //
-    // ** lors de la pause/unpause
-    // customer.subscription.paused
-    // customer.subscription.resumed
-    // customer.subscription.deleted
+    // ══════════════════════════════════════════════════════════════════════════════
+    // SUBSCRIPTION LIFECYCLE EVENTS
+    // ══════════════════════════════════════════════════════════════════════════════
+    // customer.subscription.paused   → Abonnement mis en pause
+    // customer.subscription.resumed  → Abonnement repris
+    // customer.subscription.deleted  → Abonnement annulé
+    // customer.subscription.updated  → Modification (previous_attributes disponible)
     //
-    // https://docs.stripe.com/event-destinations#events-overview 
-    // customer.subscription.updated (*.updated => previous_attributes)
+    // ══════════════════════════════════════════════════════════════════════════════
+    // INVOICE PAYMENT EVENTS
+    // ══════════════════════════════════════════════════════════════════════════════
+    // invoice.upcoming              → Rappel 1-3 jours avant renouvellement
+    // invoice.payment_action_required → Action client requise (3DS)
+    // invoice.payment_failed        → Échec paiement (smart-retries activé)
+    // invoice.payment_succeeded     → Paiement réussi → Création commande
+    //   ├─ Cas 1: payment_intent présent → Paiement carte (transaction Stripe)
+    //   └─ Cas 2: payment_intent null    → Paiement facture (invoice, 0 CHF)
     //
-    // ** normalement c'est uniquement à la création
-    // invoice.payment_action_required
+    // ══════════════════════════════════════════════════════════════════════════════
+    // CUSTOMER EVENTS
+    // ══════════════════════════════════════════════════════════════════════════════
+    // customer.updated              → Modification profil/méthode paiement
+    // customer.balance_funded       → Crédit ajouté au compte
     //
-    // ** lorsque la carte n'est plus disponible
-    // ** smart-retries
-    // ** ici https://stripe.com/docs/billing/revenue-recovery/smart-retries
-    // ** on peut accepter la commande avec le paiement par facture (option invoice)
-    // invoice.payment_failed
-    //
-    // ** qq jours avant le renouvellement de l'abo
-    // invoice.upcoming
-    //
-    // ** lorsque l'utilisateur a été modifié
-    // customer.updated
-    // ** lorsque la balance à été modifiée positivement
-    // customer.balance_funded
+    // ══════════════════════════════════════════════════════════════════════════════
+    // PAYMENT INTENT EVENTS (TWINT, Apple Pay)
+    // ══════════════════════════════════════════════════════════════════════════════
+    // payment_intent.succeeded      → Paiement asynchrone réussi
+    // payment_intent.payment_failed → Paiement asynchrone échoué
     try {
 
       //
@@ -146,7 +155,7 @@ export class Webhook {
       // https://stripe.com/docs/billing/subscriptions/webhooks#additional-action
       // send customer e-mail with confirmation requested
       if(event.type == 'invoice.payment_action_required') {
-        const invoice = event.data.object as Stripe.Invoice;
+        const invoice = await $stripe.invoices.retrieve(event.data.object.id) as Stripe.Invoice;
         // Support both old and new Stripe API structure
         const subscriptionId = invoice.subscription || (invoice as any).parent?.subscription_details?.subscription;
         const contract = await SubscriptionContract.get(subscriptionId);        
@@ -156,13 +165,8 @@ export class Webhook {
         }
 
 
-        // ✅ FIX: Handle null payment_intent (subscription with no payment method)
-        let transaction;
-        if(invoice.payment_intent) {
-          const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
-          transaction = await Transaction.get(xor(paymentIntent));
-        }
-        const customer = await contract.customer();
+        const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        const customer = await Customer.get(invoice.customer.toString());
         //
         // set pending payment intent, customer have 23h to change payment method
 
@@ -181,14 +185,7 @@ export class Webhook {
         if(testing) {
           return { event: event.type,testing, contract, error:false};
         }
-
-
-        // ✅ FIX: Handle null payment_intent (subscription with no payment method)
-        let transaction;
-        if(invoice.payment_intent) {
-          const paymentIntent = invoice.payment_intent['id'] || invoice.payment_intent;
-          transaction = await Transaction.get(xor(paymentIntent));
-        }
+        const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
         const customer = await Customer.get(invoice.customer.toString());
 
         //
@@ -201,7 +198,7 @@ export class Webhook {
       // 2/ invoice payment success with customer credit
       // only for subscription
       if(event.type == 'invoice.payment_succeeded') {
-        const invoice = event.data.object as Stripe.Invoice;
+        const invoice = await $stripe.invoices.retrieve(event.data.object.id) as Stripe.Invoice;
 
         //
         // be sure that invoice concerne a subscription
@@ -219,33 +216,15 @@ export class Webhook {
           return { event: event.type,testing, error:false};
         }
 
-        let transaction;
-        // //
-        // // case of invoice
-        // if(contract.paymentCredit) {
-        // }
         //
-        // case of stripe
+        // Handle invoice payment (amount=0, no payment_intent)
+        // vs card payment (with payment_intent)
+        let transaction;
         if(invoice.payment_intent) {
           transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
         }
-        else if(contract.content.latestPaymentIntent){
-          const paymentIntentId = contract.content.latestPaymentIntent.id||contract.content.latestPaymentIntent;
-          transaction = await Transaction.get(xor(paymentIntentId));
-        }
-        // ✅ FIX: For invoice.payment_succeeded, if no payment_intent in payload or contract,
-        // retrieve it from Stripe API since paid invoices should have a payment_intent
-        else {
-          try {
-            const fullInvoice = await $stripe.invoices.retrieve(invoice.id, {expand: ['payment_intent']});
-            if(fullInvoice.payment_intent) {
-              transaction = await Transaction.get(xor(fullInvoice.payment_intent.toString()));
-            }
-          } catch(err) {
-            console.warn(`⚠️ Could not retrieve payment_intent for invoice ${invoice.id}:`, err.message);
-          }
-        }
-
+        // else: transaction = undefined → invoice payment (handled by createFromWebHook)
+        
         const customer = await Customer.get(invoice.customer.toString());
 
         return { event: event.type , testing,contract, customer, transaction ,error:false} as WebhookStripe;
@@ -289,10 +268,10 @@ export class Webhook {
       //
       // update transaction status for WINT,ApplePay,
       if (event.type =='payment_intent.succeeded' || event.type =='payment_intent.payment_failed') {
-        const intent = event.data.object;
-        const transaction = await Transaction.get(xor(intent.id));
+        const intent = event.data.object as Stripe.PaymentIntent;
+        const transaction = await Transaction.get(xor(intent.id.toString()));
         const customer = await Customer.get(xor(transaction.customer));
-        const error = intent.last_payment_error && intent.last_payment_error.message;
+        const error = intent.last_payment_error?.message || false;
         return { event: event.type ,testing: false, transaction, customer, error} as WebhookStripe;
       }
 
