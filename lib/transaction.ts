@@ -14,6 +14,21 @@ import { LRUCache } from 'lru-cache';
 
 const locked = new LRUCache({ttl:6000,max:1000});
 
+/**
+ * OVERCAPTURE CONFIGURATION
+ * MCC 5812 (Restaurants/Food Delivery) permet jusqu'à +20-30% selon le réseau de cartes
+ * - Visa: +20%
+ * - Mastercard: +30%
+ * - Amex: +30%
+ * - Discover: +20%
+ * 
+ * Configuration via config-test.js ou config.js:
+ *   overcaptureEnabled: true/false
+ *   overcapturePercentage: 0.20 (20%)
+ * 
+ * Valeurs par défaut: enabled=false, percentage=0.20
+ */
+
 export interface PaymentOptions {
   charge?:boolean;
   oid:string;
@@ -243,6 +258,35 @@ export  class  Transaction {
     if(!amount || amount < 1.0) {
       throw new Error("Minimum amount is 1.0");
     }
+
+    //
+    // APPLE PAY / GOOGLE PAY: PaymentIntent déjà confirmé par le wallet
+    // Le frontend a créé et confirmé le PaymentIntent, on récupère juste la transaction
+    // NOTE: payment_intent peut être en clair (pi_xxx) ou xor (état temporaire du checkout)
+    if (card.payment_intent && (card.type == KngPayment.apple || card.type == KngPayment.google)) {
+      // Si c'est un ID Stripe direct (pi_xxx), l'utiliser tel quel
+      // Sinon essayer de le décrypter (compatibilité legacy xor)
+      const intentId = card.payment_intent.startsWith('pi_') 
+        ? card.payment_intent 
+        : unxor(card.payment_intent);
+      
+      const transaction = await $stripe.paymentIntents.retrieve(intentId);
+      
+      // Vérifier que le PaymentIntent est dans le bon état
+      if (!['requires_capture', 'succeeded'].includes(transaction.status)) {
+        throw new Error(`PaymentIntent invalide: status ${transaction.status}, attendu requires_capture ou succeeded`);
+      }
+      
+      // Mettre à jour les metadata avec l'order ID
+      transaction.metadata.order = options.oid;
+      transaction.metadata.wallet = card.type; // 'apple' ou 'google'
+      await $stripe.paymentIntents.update(transaction.id, { 
+        metadata: transaction.metadata,
+        transfer_group: options.txgroup
+      });
+      
+      return new Transaction(transaction);
+    }
     
     //
     // available credit balance should be > 0
@@ -264,6 +308,7 @@ export  class  Transaction {
 
     try{
       const capture_method = (options.charge) ? "automatic":"manual";
+      const overcaptureEnabled = (capture_method === 'manual') && !!Config.option('overcaptureEnabled');
       const params={
         amount:Math.round(providerAmount*100),
         currency: "CHF",
@@ -325,14 +370,30 @@ export  class  Transaction {
       else if (card.type == KngPayment.card) {
         params.payment_method = unxor(card.id);
         params.payment_method_types = ['card'];
+        
+        // OVERCAPTURE: demander l'autorisation d'overcapture si activé (MCC 5812)
+        // Uniquement pour les autorisations manuelles (pas les charges directes)
+        // NOTE: request_overcapture requiert API version >= 2024-11-20
+        // Types Stripe v11.18 ne supportent pas encore cette option, d'où le cast
+        if (overcaptureEnabled) {
+          params.payment_method_options = {
+            card: {
+              request_overcapture: 'if_available'
+            }
+          };
+        }
       } 
-      else if (card.type == KngPayment.apple) {
-        params.payment_method_types = ['card'];
+      else if (card.type == KngPayment.apple || card.type == KngPayment.google) {
+        // Apple Pay / Google Pay DOIVENT fournir un payment_intent créé via createWalletIntent
+        // Ce cas est géré plus haut (lignes ~263-283) et retourne déjà
+        // Si on arrive ici, c'est que payment_intent n'a pas été fourni
+        throw new Error("Apple Pay / Google Pay requiert un payment_intent (utiliser checkMethods avec amount)");
       } 
       else if (card.type == KngPayment.twint) {
         params.payment_method_types = ['twint'];
         params.confirm = false;
         params.capture_method = 'automatic';
+        // Note: TWINT ne supporte pas l'overcapture
       } else {
         throw new Error("Votre portefeuille ne dispose pas de fonds suffisants pour effectuer cet achat");
       }
@@ -389,6 +450,8 @@ export  class  Transaction {
         case "visa":
         case "mc":
         case "mastercard":
+        case "apple":   // Apple Pay - utilise des cartes tokenisées
+        case "google":  // Google Pay - utilise des cartes tokenisées
         return await Transaction.get(payment.transaction);
         case "cash":
         case "balance":
@@ -533,14 +596,17 @@ export  class  Transaction {
     const providerAuthAmount = round1cts(this.amount-balanceAuthAmount);
 
 
+    // OVERCAPTURE: si amount > this.amount, pas de refund, on capture plus
+    const isOvercapture = amount > this.amount;
+    
     // if the amount is smaller than balanceAuthAmount, the capture is 0, the payment should be refunded
-		const refundTotalAmount = round1cts(Math.max(0,this.amount-amount));
+		const refundTotalAmount = isOvercapture ? 0 : round1cts(Math.max(0, this.amount - amount));
 
 		//const refundAuthAmount = round1cts(Math.max(0,authAmount-refundTotalAmount));
-		const refundBalanceAmount = (refundTotalAmount>=providerAuthAmount)?round1cts(refundTotalAmount-providerAuthAmount):0;
-		const captureBalanceAmount = round1cts(Math.max(0,amount-providerAuthAmount));
-    // capture for stripe
-		const captureProviderAmount = round1cts(Math.max(0,amount-balanceAuthAmount));
+		const refundBalanceAmount = (refundTotalAmount >= providerAuthAmount) ? round1cts(refundTotalAmount - providerAuthAmount) : 0;
+		const captureBalanceAmount = round1cts(Math.max(0, amount - providerAuthAmount));
+    // capture for stripe (peut être > providerAuthAmount en cas d'overcapture)
+		const captureProviderAmount = round1cts(Math.max(0, amount - balanceAuthAmount));
 
     // new amount for customer_credit after capture
     const customerCreditCaptureAmount = Math.max(0,round1cts(balanceAuthAmount-refundBalanceAmount));
@@ -596,10 +662,37 @@ export  class  Transaction {
       }      
 
       //
-      // amount test is done after the invoice case
-      if(this.amount > 0 && amount > this.amount) {
-        console.log('❌ ERROR: capture ask amount,this.amount, balanceAuthAmount, providerAuthAmount',amount,this.amount,balanceAuthAmount,providerAuthAmount);
+      // OVERCAPTURE validation - separate config for Invoice vs Stripe
+      // - overcaptureInvoiceEnabled: for invoice (customer credit) - can be enabled independently
+      // - overcaptureEnabled: for Stripe (requires MCC 5812 + IC+ pricing)
+      const overcapturePercentage = Config.option('overcapturePercentage') || 0.20;
+      
+      //
+      // Determine if overcapture is enabled based on provider
+      const isInvoiceProvider = this.provider === 'invoice';
+      const overcaptureEnabled = isInvoiceProvider 
+        ? !!Config.option('overcaptureInvoiceEnabled')
+        : !!Config.option('overcaptureEnabled');
+      
+      const maxCaptureAmount = overcaptureEnabled 
+        ? round1cts(this.amount * (1 + overcapturePercentage))
+        : this.amount;
+      
+      if(this.amount > 0 && amount > maxCaptureAmount) {
+        console.log('❌ ERROR: capture amount exceeds overcapture limit');
+        console.log(`   Provider: ${this.provider}`);
+        console.log(`   Authorized: ${this.amount} CHF`);
+        console.log(`   Requested:  ${amount} CHF`);
+        console.log(`   Max allowed (${overcapturePercentage * 100}% overcapture): ${maxCaptureAmount} CHF`);
+        console.log(`   overcaptureEnabled (${isInvoiceProvider ? 'invoice' : 'stripe'}): ${overcaptureEnabled}`);
         throw new Error(errorMsg+' (1)');
+      }
+      
+      // Log overcapture usage
+      if(amount > this.amount) {
+        const overcaptureAmount = round1cts(amount - this.amount);
+        const overcapturePercent = round1cts((overcaptureAmount / this.amount) * 100);
+        console.log(`💰 OVERCAPTURE (${this.provider}): +${overcaptureAmount} CHF (+${overcapturePercent}%) sur autorisation de ${this.amount} CHF`);
       }
 
       //
@@ -613,25 +706,36 @@ export  class  Transaction {
         // use credit (invoice) OR debit (paid)
         let status=(customer.balance<0)? "invoice":"paid";
 
-        // //
-        // // case of authorized paiement
-        // // capture can't exceed the initial locked amount 
-        // if((this.amount)<=(round1cts(balanceAuthAmount + captureAmount))) {
-        //   throw new Error(errorMsg+' (3)');
-        // }
-
         //
         // compute the amount that should be restored on customer account
         // FIXME missing test with error when auth 46.3, capture 40 and refund 6.3
-        //balanceAmount = (customerCreditCaptureAmount>0)?round1cts(refundBalanceAmount-captureAmount/100):captureAmount/100;// round1cts(this.amount*100-captureAmount)/100;          
-        Config.option('debug') && console.log('------- DBG captureBalanceAmount,refundBalanceAmount,customerCreditCaptureAmount',captureBalanceAmount,(refundBalanceAmount),customerCreditCaptureAmount,status);
-
-        // the amount is adjusted with the balance (balanceAuthAmount)
-        await customer.updateCredit(refundBalanceAmount,'capture:'+this.oid);
+        Config.option('debug') && console.log('------- DBG captureBalanceAmount,refundBalanceAmount,customerCreditCaptureAmount,isOvercapture',captureBalanceAmount,(refundBalanceAmount),customerCreditCaptureAmount,isOvercapture);
 
         //
-        // depending the balance position on credit or debit, invoice will be sent
-        this._payment = createOrderPayment(this.customer,Math.round(captureBalanceAmount*100),0,Math.round(customerCreditCaptureAmount*100),status,this.oid);
+        // OVERCAPTURE for invoice: debit additional amount from customer credit
+        // Standard case: refundBalanceAmount >= 0 (refund unused authorization)
+        // Overcapture case: isOvercapture = true, we need to debit additional amount
+        if (isOvercapture) {
+          //
+          // Calculate additional debit: overcapture delta
+          const overcaptureDelta = round1cts(amount - this.amount);
+          Config.option('debug') && console.log('------- DBG invoice overcapture delta:', overcaptureDelta);
+          
+          //
+          // Debit the additional amount (negative = debit)
+          await customer.updateCredit(-overcaptureDelta, 'overcapture:' + this.oid);
+          
+          //
+          // Update customerCreditCaptureAmount to reflect actual captured amount
+          const actualCustomerCredit = round1cts(this.amount + overcaptureDelta);
+          this._payment = createOrderPayment(this.customer, Math.round(amount * 100), 0, Math.round(actualCustomerCredit * 100), status, this.oid);
+        } else {
+          //
+          // Standard case: refund unused authorization
+          await customer.updateCredit(refundBalanceAmount, 'capture:' + this.oid);
+          this._payment = createOrderPayment(this.customer, Math.round(captureBalanceAmount * 100), 0, Math.round(customerCreditCaptureAmount * 100), status, this.oid);
+        }
+        
         return this;
       }
 

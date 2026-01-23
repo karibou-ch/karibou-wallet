@@ -427,6 +427,42 @@ export class Customer {
     });
   }
 
+  /**
+  * ## customer.createWalletIntent()
+  * Creates a PaymentIntent for Apple Pay / Google Pay wallets
+  * The intent is created with capture_method: 'manual' for 2-step payment
+  * Overcapture is requested if enabled (MCC 5812 allows +20% for Visa/MC)
+  * @param amount - Amount in CHF (decimal)
+  * @returns PaymentIntent with client_secret for wallet confirmation
+  */
+  async createWalletIntent(amount: number) {
+    const overcaptureEnabled = Config.option('overcaptureEnabled');
+    
+    const params: Stripe.PaymentIntentCreateParams = {
+      amount: Math.round(amount * 100),
+      currency: 'chf',
+      customer: this._id,
+      capture_method: 'manual',
+      // Apple Pay / Google Pay utilisent des cartes tokenisées
+      payment_method_types: ['card'],
+      metadata: {
+        wallet: 'pending',  // Sera mis à jour avec 'apple' ou 'google' lors de l'authorize
+        uid: this._metadata.uid
+      }
+    };
+
+    // Request overcapture si activé (MCC 5812: +20% Visa/MC, +15% Amex)
+    if (overcaptureEnabled) {
+      params.payment_method_options = {
+        card: {
+          request_overcapture: 'if_available'
+        }
+      };
+    }
+
+    return await $stripe.paymentIntents.create(params);
+  }
+
 
   /**
   * ## customer.addMethod()
@@ -541,13 +577,30 @@ export class Customer {
     // make sure that we get the latest
     const methods  = await this.listMethods();
     const result:any = {
-      intent: false
+      intent: false,
+      walletIntent: false
     };
 
     //
-    // only for 3d secure 
+    // SetupIntent for adding new card (3DS)
     if(addIntent) {
       result.intent = await this.addMethodIntent();
+    }
+
+    //
+    // PaymentIntent for Apple Pay / Google Pay wallets
+    // Created when amount is provided (checkout context)
+    if(amount && amount > 0) {
+      try {
+        const walletIntent = await this.createWalletIntent(amount);
+        result.walletIntent = {
+          id: walletIntent.id,
+          client_secret: walletIntent.client_secret
+        };
+      } catch(err) {
+        // Silently fail - wallet payments are optional
+        console.log('--- DBG createWalletIntent failed:', err.message);
+      }
     }
 
     //

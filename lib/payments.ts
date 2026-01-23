@@ -11,6 +11,7 @@ export enum KngPayment {
     credit = "credit",
     twint = "twint",
     apple = "apple",
+    google = "google",  // Google Pay
     bitcoin = "bitcoin",
     ethereum = "etereum",
     erc20 = "erc20"
@@ -116,6 +117,8 @@ export interface KngCard extends KngPaymentSource {
   fingerprint:string;
   expiry:string;
   brand:string;
+  // Pour Apple Pay / Google Pay: PaymentIntent déjà confirmé par le wallet
+  payment_intent?:string;
 }
 
 

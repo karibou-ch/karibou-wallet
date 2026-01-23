@@ -78,11 +78,14 @@ export default class Config {
         case 'allowMaxAmount':
         case 'allowMaxCredit':
         case 'reservedAmount':
+        case 'overcapturePercentage':
             Config.settings[option] = parseFloat(value);break;
         case 'sandbox':
         case 'debug':
         case 'allowMultipleSetOption':
-          Config.settings[option] = Boolean(value);break;
+        case 'overcaptureEnabled':
+        case 'overcaptureInvoiceEnabled':
+              Config.settings[option] = Boolean(value);break;
         case 'allowedCurrencies':
           if (!Array.isArray(value)) {
             throw new Error('Allowed currencies must be an array');
