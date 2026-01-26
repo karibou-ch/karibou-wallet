@@ -418,11 +418,13 @@ export class Customer {
 
   /**
   * ## customer.addMethodIntent()
-  * Intent to add a new method of payment (off_session) to the customer
-  * @returns the payment Intent object
+  * Creates a SetupIntent to add a new payment method (off_session) to the customer.
+  * The customer is linked to enable 3DS SCA exemption for future off-session payments.
+  * @returns the SetupIntent object with client_secret for frontend confirmation
   */
   async addMethodIntent() {
     return await $stripe.setupIntents.create({
+      customer: this._id,
       usage:'off_session',
     });
   }
