@@ -1004,13 +1004,12 @@ export class SubscriptionContract {
         expand: ['latest_invoice.payment_intent']
       } as Stripe.SubscriptionCreateParams;
 
-      // 3 days before the 1st tuesday of the next week/month    
+      // Future start dates should delay the first invoice entirely.
+      // Stripe's recommended model is to use a trial that ends on the anchor date.
       if(start_from=='now') {
         //options.billing_cycle_anchor = (Date.now()+1000)/1000|0;
       }else {
-        //
-        // start from generate a setup_intents instead of payment_intents
-        options.billing_cycle_anchor = (start_from.getTime()/1000)|0;
+        options.trial_end = (start_from.getTime()/1000)|0;
       }
 
       //
@@ -1167,7 +1166,9 @@ export class SubscriptionContract {
         const available = this.findOneItem(item.sku);
         if(available) {
           item.id = available.id;  // ❌ Creates duplicates - to be removed
-          item.product = available.price.product;  
+          // ✅ FIX: Ensure product is always a string ID, not an expanded object
+          const productRef = available.price.product;
+          item.product = typeof productRef === 'string' ? productRef : productRef.id;
         }
       })
 

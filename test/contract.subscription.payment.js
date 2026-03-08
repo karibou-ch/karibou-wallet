@@ -183,32 +183,30 @@ describe("Class subscription.payment", function(){
     const subOptions = { shipping,dayOfWeek,fees };
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
     
-    // ✅ AVEC billing_cycle_anchor: Start future → status ACTIVE maintenant
-    defaultSub.content.status.should.equal('active')
+    // ✅ AVEC trial_end: Start future → status trialing sans facturation immédiate
+    defaultSub.content.status.should.equal('trialing')
     
     // ✅ CORRECTION: Vérifier dans defaultSub._subscription (vraie réponse Stripe)
     console.log('dateValid envoyé:', dateValid);
     console.log('timestamp envoyé:', Math.floor(dateValid.getTime() / 1000));
     
-    // ✅ Vérifier billing_cycle_anchor dans la vraie réponse Stripe
-    should.exist(defaultSub._subscription.billing_cycle_anchor);
-    console.log('billing_cycle_anchor Stripe:', defaultSub._subscription.billing_cycle_anchor);
-    console.log('billing_cycle_anchor date:', new Date(defaultSub._subscription.billing_cycle_anchor * 1000));
+    // ✅ Vérifier trial_end dans la vraie réponse Stripe
+    should.exist(defaultSub._subscription.trial_end);
+    console.log('trial_end Stripe:', defaultSub._subscription.trial_end);
+    console.log('trial_end date:', new Date(defaultSub._subscription.trial_end * 1000));
     
     const expectedTimestamp = Math.floor(dateValid.getTime() / 1000);
-    defaultSub._subscription.billing_cycle_anchor.should.equal(expectedTimestamp);
+    defaultSub._subscription.trial_end.should.equal(expectedTimestamp);
     
-    // ✅ Avec billing_cycle_anchor FUTUR: SetupIntent créé au lieu de PaymentIntent
+    // ✅ Avec trial_end FUTUR: pas de PaymentIntent immédiat
     should.not.exist(defaultSub.content.latestPaymentIntent);
     console.log('✅ Pas de latestPaymentIntent (normal pour futur)');
     
-    // ✅ Vérifier que Stripe a créé un SetupIntent pour le futur
-    should.exist(defaultSub._subscription.pending_setup_intent);
-    console.log('pending_setup_intent créé:', defaultSub._subscription.pending_setup_intent);
-    
-    // ✅ Vérifier latest_invoice est null (pas de facturation immédiate)
-    should.not.exist(defaultSub._subscription.latest_invoice);
-    console.log('✅ latest_invoice: null (pas de facturation immédiate)');
+    // ✅ Avec trial_end, Stripe crée une invoice de trial à 0 CHF, sans PaymentIntent
+    should.exist(defaultSub._subscription.latest_invoice);
+    defaultSub._subscription.latest_invoice.total.should.equal(0);
+    should.not.exist(defaultSub._subscription.latest_invoice.payment_intent);
+    console.log('✅ latest_invoice de trial à 0 CHF, sans PaymentIntent');
   });
 
   it("SubscriptionContract start now with valid payment method is active", async function() {
