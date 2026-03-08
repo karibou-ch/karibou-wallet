@@ -423,4 +423,7 @@ describe("Class subscription.updated", function(){
     });
 
   });
+
+  // ✅ Additional tests for price.product handling are in:
+  // test/contract.subscription.expandedProduct.js
 });

@@ -402,6 +402,5 @@ describe("Class subscription.creation", function(){
       //console.log('---ERR',err.message)
     }
   });
-	  
 
 });
