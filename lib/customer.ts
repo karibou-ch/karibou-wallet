@@ -211,6 +211,7 @@ export class Customer {
 
       assert(email);
       assert(uid);
+      const normalizedPhone = normalizePhone(phone);
       
       //Le prénom (First Name - fname)
       assert(fname);
@@ -222,12 +223,12 @@ export class Customer {
         description: fname + ' ' + lname + ' id:'+uid,
         email: email,
         name: fname + ' ' + lname,
-        phone,
+        phone: normalizedPhone,
         metadata: {uid,fname, lname},
         expand: ['cash_balance']
       });  
 
-      return new Customer(stripe.id,email,phone, stripe.invoice_settings?.default_payment_method?.toString() || null,stripe.cash_balance,0,stripe.metadata); 
+      return new Customer(stripe.id,email,normalizedPhone, stripe.invoice_settings?.default_payment_method?.toString() || null,stripe.cash_balance,0,stripe.metadata); 
     }catch(err) {
       throw parseError(err);
     } 
@@ -337,6 +338,9 @@ export class Customer {
     try{
       const keys = metadataElements(this._metadata,'addr');
       address.id = 'addr-' + keys.length + 1;
+      if(address.phone) {
+        address.phone = normalizePhone(address.phone);
+      }
       this._metadata[address.id] = JSON.stringify(address,null,0);
       const customer = await $stripe.customers.update(
         this._id,

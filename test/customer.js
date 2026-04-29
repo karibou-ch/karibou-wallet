@@ -200,7 +200,7 @@ describe("customer", function(){
 
     updated.email.should.equal("testing@wallet.com");
     updated.uid.should.equal('1234');
-    updated.phone.should.equal('0798887766');
+    updated.phone.should.equal('+41798887766');
     updated.name.familyName.should.equal("Barrr");
     updated.name.givenName.should.equal("Foooo");
 
@@ -215,6 +215,7 @@ describe("customer", function(){
       streetAddress:'3 route de chene',
       region:'ge',
       postalCode:'1208',
+      phone:'079 123 45 67',
       lat:'12',
       lng:'34'    
     };
@@ -232,6 +233,7 @@ describe("customer", function(){
     cust.addresses[0].lng.should.equal('34');
     cust.addresses[0].postalCode.should.equal('1208');
     cust.addresses[0].region.should.equal('ge');
+    cust.addresses[0].phone.should.equal('+41791234567');
   });
 
   it("update address", async function() {

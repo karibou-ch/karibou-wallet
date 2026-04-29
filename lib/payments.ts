@@ -144,6 +144,10 @@ export const $stripe = new Stripe(Config.option('stripePrivatekey'), {
 
 
 export const normalizePhone = function(phone) {
+  if (!phone) {
+    return '';
+  }
+
   // Remove all non-digits plus keep '+'
   // lookaheads (?!...) do not consume characters in the string;
   // they simply check that what follows does not match the specified pattern.
@@ -153,6 +157,13 @@ export const normalizePhone = function(phone) {
   if (normalizedNumber.startsWith('00')) {
     normalizedNumber = '+' + normalizedNumber.slice(2);
   }
+
+  // Swiss local mobile numbers: add +41 for 07/08/09.
+  // TODO: make the country explicit in the caller before applying local rules.
+  if (/^0[789]/.test(normalizedNumber)) {
+    normalizedNumber = '+41' + normalizedNumber.slice(1);
+  }
+
   return normalizedNumber;
 } 
 
