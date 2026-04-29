@@ -121,6 +121,24 @@ describe("Class transaction.stripe", function(){
     defaultTX = tx.id;
   });
 
+  it("Transaction authorize prepaid uses automatic capture", async function() {
+    const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+    const tx = await transaction.Transaction.authorize(defaultCustomer, card, 2, {
+      ...paymentOpts,
+      oid: 'prepaid-01234',
+      prepaid: true
+    });
+
+    tx.status.should.equal('prepaid');
+    tx.authorized.should.equal(true);
+    tx.captured.should.equal(false);
+    tx._payment.capture_method.should.equal('automatic');
+    tx._payment.status.should.equal('succeeded');
+    tx._payment.metadata.exended_status.should.equal('prepaid');
+
+    await tx.cancel();
+  });
+
   it("Transaction load authorization", async function() {
     const tx = await transaction.Transaction.get(defaultTX);
     tx.authorized.should.equal(true);

@@ -31,6 +31,7 @@ const locked = new LRUCache({ttl:6000,max:1000});
 
 export interface PaymentOptions {
   charge?:boolean;
+  prepaid?:boolean;
   oid:string;
   txgroup:string;
   email:string;
@@ -307,7 +308,7 @@ export  class  Transaction {
     // ==> idempotencyKey: options.oid,
 
     try{
-      const capture_method = (options.charge) ? "automatic":"manual";
+      const capture_method = (options.charge || options.prepaid) ? "automatic":"manual";
       const overcaptureEnabled = (capture_method === 'manual') && !!Config.option('overcaptureEnabled');
       const params={
         amount:Math.round(providerAmount*100),
@@ -322,6 +323,10 @@ export  class  Transaction {
           order: options.oid
         },
       } as Stripe.PaymentIntentCreateParams;
+
+      if(options.prepaid) {
+        params.metadata.exended_status = 'prepaid';
+      }
 
       //
       // optional shipping
