@@ -183,8 +183,10 @@ describe("Class subscription.payment", function(){
     const subOptions = { shipping,dayOfWeek,fees };
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
     
-    // ✅ AVEC trial_end: Start future → status trialing sans facturation immédiate
-    defaultSub.content.status.should.equal('trialing')
+    // Start future uses Stripe trialing to avoid immediate billing, but the
+    // business status remains active unless metadata.pausedUntil marks a pause.
+    defaultSub.content.status.should.equal('active')
+    defaultSub.content.issue.should.equal('trialing')
     
     // ✅ CORRECTION: Vérifier dans defaultSub._subscription (vraie réponse Stripe)
     console.log('dateValid envoyé:', dateValid);
@@ -197,6 +199,7 @@ describe("Class subscription.payment", function(){
     
     const expectedTimestamp = Math.floor(dateValid.getTime() / 1000);
     defaultSub._subscription.trial_end.should.equal(expectedTimestamp);
+    defaultSub.content.nextInvoice.getTime().should.equal(expectedTimestamp * 1000);
     
     // ✅ Avec trial_end FUTUR: pas de PaymentIntent immédiat
     should.not.exist(defaultSub.content.latestPaymentIntent);

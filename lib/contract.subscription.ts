@@ -193,7 +193,13 @@ export class SubscriptionContract {
     // CAS 1,2,3,5: Calcul de la prochaine facturation basé sur current_period_end
     // La source la plus fiable pour la prochaine facture est `current_period_end`.
     // Stripe calcule cette date pour nous, en tenant compte de l'ancre de facturation, des périodes d'essai, etc.
-    let nextBilling = new Date(this._subscription.current_period_end * 1000);
+    const currentPeriodEnd = this._subscription.current_period_end;
+    let nextBilling = currentPeriodEnd ? new Date(currentPeriodEnd * 1000) : null;
+    if (this._subscription.status === 'trialing' &&
+        this._subscription.trial_end &&
+        (!nextBilling || isNaN(nextBilling.getTime()))) {
+      nextBilling = new Date(this._subscription.trial_end * 1000);
+    }
 
     // CAS 2: Si l'abonnement est en pause avec une limite, la prochaine facturation aura lieu à la date de reprise ou après.
     const pauseResumeTimestamp = this._subscription.pause_collection?.resumes_at;
@@ -201,7 +207,7 @@ export class SubscriptionContract {
       const resumeDate = new Date(pauseResumeTimestamp * 1000);
       // Si la prochaine date de facturation calculée est avant la date de reprise,
       // alors la vraie prochaine facturation est la date de reprise.
-      if (nextBilling < resumeDate) {
+      if (!nextBilling || nextBilling < resumeDate) {
         nextBilling = resumeDate;
       }
     }
@@ -309,8 +315,10 @@ export class SubscriptionContract {
    * @see https://stripe.com/docs/api/subscriptions/object#subscription_object-status
    */
   get status () { 
-    // SCÉNARIO 1: Pause manuelle prioritaire sur status Stripe
-    if(this._subscription.pause_collection) {
+    // SCÉNARIO 1: Pause manuelle prioritaire sur status Stripe.
+    // Les pauses "solides" utilisent trial_end, donc metadata.pausedUntil
+    // distingue une vraie pause d'un simple démarrage futur.
+    if(this._subscription.pause_collection || this._subscription.metadata.pausedUntil) {
       return 'paused';
     }
     
@@ -325,9 +333,12 @@ export class SubscriptionContract {
       case "past_due":        // Facture en retard de paiement
         return "incomplete";
       
-      // SCÉNARIOS 2,3,4: Conservation du status Stripe original
+      case "trialing":
+        return "active";
+
+      // SCÉNARIOS 2,4: Conservation du status Stripe original
       default:
-        return stripeStatus; // 'active', 'trialing', 'canceled'
+        return stripeStatus; // 'active', 'canceled'
     } 
   }
   get content ():Subscription { 
@@ -370,6 +381,9 @@ export class SubscriptionContract {
   }
 
   get pausedUntil(): Date|0 {
+    if(this._subscription.metadata.pausedUntil) {
+      return new Date(this._subscription.metadata.pausedUntil);
+    }
     if(this._subscription.pause_collection && this._subscription.pause_collection.resumes_at) {
       return new Date(this._subscription.pause_collection.resumes_at * 1000 );
     }
@@ -542,43 +556,56 @@ export class SubscriptionContract {
   // set the subscription on pause, 
   // sub will pause on {from} Date ({from} billing must be aligned with the billing_cycle_anchor to avoid confusion)
   // sub will resume on {to} Date ({to} billing must be aligned 2-3 days before the dayOfWeek delivery) 
-  // https://stripe.com/docs/billing/subscriptions/pause
+  // https://stripe.com/docs/billing/subscriptions/pause-payment
+  //
+  // FIXME: Remplacer pause_collection par trial_end pour éviter la génération de factures
+  //
+  // PROBLÈME ACTUEL (pause_collection: void):
+  //   - pause_collection ne bloque PAS la génération de factures, il les void après création
+  //   - Race condition observée: Stripe crée la facture et charge la carte avant d'appliquer le void
+  //   - Résultat: invoice.payment_succeeded reçu malgré la pause (ex: pause le 1.4, facture payée le 3.4)
+  //   - Le webhook crée alors une commande non désirée
+  //
+  // SOLUTION: Utiliser trial_end (même mécanisme que resetBillingCycle)
+  //   - trial_end empêche TOUTE génération de facture pendant la période
+  //   - Reprise automatique de la facturation à la fin du trial
+  //   - Le billing_cycle_anchor se recale sur la fin du trial
+  //
+  // IMPLÉMENTATION:
+  //   1. Ajouter metadata.pausedUntil = to.toISOString() pour marquer l'état pause
+  //   2. Utiliser trial_end: timestamp au lieu de pause_collection
+  //   3. proration_behavior: 'none' pour éviter les ajustements de prix
+  //   4. Adapter le getter status: si status=='trialing' && metadata.pausedUntil → retourner 'paused'
+  //   5. Adapter pausedUntil getter: lire metadata.pausedUntil en plus de pause_collection.resumes_at
+  //   6. Adapter resumeManually: supprimer metadata.pausedUntil sans créer de facture immédiate
+  //
+  // IMPACT WEBHOOKS:
+  //   - Avant: customer.subscription.updated avec previous_attributes.pause_collection
+  //   - Après: customer.subscription.updated avec previous_attributes.trial_end + previous_attributes.status
+  //   - karibou-api/controllers/orders.js doit détecter la pause via metadata.pausedUntil
+  //
   async pause(to:Date, from?:Date) {
-    const metadata = this._subscription.metadata;
+    const metadata = Object.assign({}, this._subscription.metadata);
 
-    // Stripe pause options and invoice workflow during pause:
-    // 1. 'void': No invoices generated during pause. 
-    //    Webhooks: No invoice events triggered.
-    //    
-    // 2. 'keep_as_draft': Invoices created as drafts (invoice.created) but not finalized or sent.
-    //    Webhooks: invoice.created only, no payment attempts.
-    //    
-    // 3. 'mark_uncollectible': Invoices generated (invoice.created, invoice.finalized) but marked uncollectible. 
-    //    Webhooks: invoice.created, invoice.finalized, invoice.marked_uncollectible.
-    //    
-    // Documentation: https://stripe.com/docs/billing/subscriptions/pause
-    const behavior:any = {
-      // Default behavior: void - no invoices generated during pause
-      behavior: 'void'
+    if(!to || !to.toDateString) {
+      throw new Error("resume date is incorrect");
     }
-    
-    // Set the resume date if provided
-    // Important: resume time should be 2-3 days before the next shipping day
-    if (to) {
-      if(!to.toDateString) throw new Error("resume date is incorrect");
-      // Convert JavaScript Date to Unix timestamp (seconds)
-      behavior.resumes_at = parseInt(to.getTime()/1000+'');
+    metadata.pausedUntil = to.toISOString();
+    if(from) {
+      metadata.pausedFrom = from.toISOString();
     }
-    
-    // Note: We could also use 'from' parameter to schedule a future pause
-    // Currently not implemented but could be added if needed
-    // if (from && from.getTime()) {
-    //   behavior.pauses_at = parseInt(from.getTime()/1000+'');
-    // }
+
+    const trialEnd = parseInt(to.getTime()/1000+'');
 
     this._subscription = await $stripe.subscriptions.update(
       this._subscription.id,
-      {pause_collection: behavior, expand:['latest_invoice.payment_intent']}
+      {
+        trial_end: trialEnd,
+        proration_behavior: 'none',
+        pause_collection: '',
+        metadata,
+        expand:['latest_invoice.payment_intent']
+      } as any
     );
 
     cache.set(this._subscription.id,this);
@@ -586,15 +613,18 @@ export class SubscriptionContract {
 
 
   async resumeManualy(){
-    const metadata = this._subscription.metadata;
-    metadata.from = null;
-    metadata.to = null;
+    const metadata = Object.assign({}, this._subscription.metadata, {
+      from: null,
+      to: null,
+      pausedFrom: null,
+      pausedUntil: null
+    });
     this._subscription = await $stripe.subscriptions.update(
       this._subscription.id, {
         pause_collection: '', 
         metadata, 
         expand:['latest_invoice.payment_intent']
-      }
+      } as any
     );
 
     cache.set(this._subscription.id,this);
@@ -1321,13 +1351,22 @@ export class SubscriptionContract {
     // constraint subscription by date {created: {gt: Date.now()}}
     // Note: 'data.items.data.price.product' would exceed 4 levels limit
     // For full product info, use SubscriptionContract.get(id) instead
-    const subscriptions:Stripe.ApiList<Stripe.Subscription> = await $stripe.subscriptions.list({
+    const options:Stripe.SubscriptionListParams = {
       status:'all',
       customer:unxor(customer.id),
+      limit: 100,
       expand:['data.latest_invoice.payment_intent']
-    });
+    };
 
-    const contracts = subscriptions.data.map(sub => new SubscriptionContract(sub));
+    const subscriptions:Stripe.Subscription[] = [];
+    let page:Stripe.ApiList<Stripe.Subscription>;
+    do {
+      page = await $stripe.subscriptions.list(options);
+      subscriptions.push(...page.data);
+      options.starting_after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+    } while(page.has_more);
+
+    const contracts = subscriptions.map(sub => new SubscriptionContract(sub));
     cache.set(customer.id,contracts);
 
     //
@@ -1347,13 +1386,21 @@ export class SubscriptionContract {
     // Note: 'data.items.data.price.product' exceeds 4 levels - use get() for full product info
     const optionsWithExpand = {
       ...options,
+      limit: options.limit || 100,
       expand: ['data.latest_invoice.payment_intent']
-    };
-    const subscriptions:Stripe.ApiList<Stripe.Subscription> = await $stripe.subscriptions.list(optionsWithExpand);
+    } as Stripe.SubscriptionListParams;
+
+    const subscriptions:Stripe.Subscription[] = [];
+    let page:Stripe.ApiList<Stripe.Subscription>;
+    do {
+      page = await $stripe.subscriptions.list(optionsWithExpand);
+      subscriptions.push(...page.data);
+      optionsWithExpand.starting_after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+    } while(page.has_more);
 
     //
     // wrap stripe subscript to karibou 
-    return subscriptions.data.map(sub => new SubscriptionContract(sub))
+    return subscriptions.map(sub => new SubscriptionContract(sub))
 
   }  
 

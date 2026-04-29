@@ -27,7 +27,7 @@ const { Webhook,WebhookContent } = require("../dist/webhook");
  const weekdays = "dimanche_lundi_mardi_mercredi_jeudi_vendredi_samedi".split('_');
 
 describe("Class subscription.use customer default payment method", function(){
-  this.timeout(10000);
+  this.timeout(20000);
 
   let defaultCustomer;
   let defaultSub;
@@ -78,6 +78,7 @@ describe("Class subscription.use customer default payment method", function(){
   });
 
   after(async function () {
+    if (!defaultCustomer) return;
     await $stripe.customers.del(unxor(defaultCustomer.id));
     //await $stripe.subscriptions.del(defaultSub.id);
   });
