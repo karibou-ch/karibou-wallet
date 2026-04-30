@@ -155,6 +155,35 @@ describe("Class transaction with credit.balance mixed with Stripe", function(){
     defaultCustomer.balance.should.equal(10);
   });    
 
+  it("Transaction create mixed payment credit plus coupon plus prepaid visa", async function() {
+    const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+    const coupon = await $stripe.coupons.create({
+      amount_off: 500,
+      currency:'CHF'
+    });
+
+    const tx = await transaction.Transaction.authorize(defaultCustomer,card,20,{
+      ...paymentOpts,
+      oid: 'mixed-credit-coupon-01234',
+      coupon: coupon.id
+    });
+
+    tx.status.should.equal("authorized");
+    tx.provider.should.equal("stripe");
+    tx.amount.should.equal(20);
+    tx.customerCredit.should.equal(15);
+    tx._payment.metadata.customer_credit.should.equal('1500');
+    tx._payment.metadata.coupon.should.equal(coupon.id);
+    tx._payment.metadata.coupon_amount.should.equal('500');
+
+    defaultCustomer = await customer.Customer.get(tx.customer);
+    defaultCustomer.balance.should.equal(0);
+
+    await tx.cancel();
+    defaultCustomer = await customer.Customer.get(tx.customer);
+    defaultCustomer.balance.should.equal(10);
+  });
+
 
   
 });

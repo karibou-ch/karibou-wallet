@@ -58,7 +58,7 @@ describe("customer.balance.coupon", function(){
 
   it("add coupon credit ", async function() {
     const cust = await customer.Customer.get(custCleanList[0]);
-    await cust.applyCoupon(couponcode);
+    await cust.applyCredit(couponcode);
   });
 
   it("balance should equal coupon", async function() {
@@ -78,8 +78,8 @@ describe("customer.balance.coupon", function(){
   it("add coupon credit throw an exception in race condition", async function() {
     const cust = await customer.Customer.get(custCleanList[0]);
     try{
-      cust.applyCoupon(couponcode).then(()=>{}).catch(()=>{});      
-      await cust.applyCoupon(couponcode);
+      cust.applyCredit(couponcode).then(()=>{}).catch(()=>{});      
+      await cust.applyCredit(couponcode);
       should.not.exist("dead zone");
     }catch(err) {
       err.message.should.containEql('reentrancy detection');

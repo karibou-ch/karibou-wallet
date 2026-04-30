@@ -10,6 +10,15 @@ import Config, { nonEnumerableProperties } from './config';
 const cache = new (require("lru-cache").LRUCache)({ttl:1000 * 60 * 60 * 24,max:2000});
 const locked = new (require("lru-cache").LRUCache)({ttl:3000,max:1000});
 
+export interface KngCouponCredit {
+  code:string;
+  name:string;
+  note:string;
+  amount:number;
+  amount_off:number;
+  currency:string;
+}
+
 export class Customer {
 
   private _sources:Stripe.Card[]|any;
@@ -531,41 +540,72 @@ export class Customer {
 
 
   //
-  // update customer balance with coupon code
-  async applyCoupon(code:string) {
+  // read and validate a coupon without consuming it
+  async readCoupon(code:string):Promise<KngCouponCredit> {
+    const coupon = await $stripe.coupons.retrieve(code);
+    const amount = coupon.amount_off;
+    const validity = new Date(coupon.created*1000 + (coupon.duration_in_months||12)*32*86400000);
+    
+    //
+    // check if the coupon is still valid
+    if (validity.getTime()<Date.now()){
+      throw new Error("Le coupon n'est plus valide, merci de bien vouloir nous contacter");
+    }
+    //
+    // check if the coupon is associated to this customer
+    if(coupon.metadata.id && this.id != coupon.metadata.id) {
+      throw new Error("Le coupon n'est pas associé à ce compte client");
+    }
+
+    if(!amount || amount<0) {
+      throw new Error("le coupon ne contient pas de crédit");
+    }
+
+    return {
+      code,
+      name: coupon.name || '',
+      note: code+':'+(coupon.name || ''),
+      amount: amount/100,
+      amount_off: amount,
+      currency: coupon.currency || 'chf'
+    };
+  }
+
+  //
+  // consume coupon as a transaction credit, without changing customer balance
+  async applyCoupon(code:string, amount:number):Promise<KngCouponCredit> {
     const _method = 'appcoupon'+code;
     this.lock(_method,'');
     try{
-      const coupon = await $stripe.coupons.retrieve(
-        code
-      );
-  
-  
-      
-      const amount = coupon.amount_off;
-      const validity = new Date(coupon.created*1000 + (coupon.duration_in_months||12)*32*86400000);
-      
+      amount = Math.round(amount * 100) / 100;
+      const coupon = await this.readCoupon(code);
+      if(coupon.amount > amount) {
+        throw new Error("Le coupon est plus grand que le montant de la facture");
+      }
+
       //
-      // check if the coupon is still valid
-      if (validity.getTime()<Date.now()){
-        throw new Error("Le coupon n'est plus valide, merci de bien vouloir nous contacter");
-      }
-      //
-      // check if the coupon is associated to this customer
-      if(coupon.metadata.id && this.id != coupon.metadata.id) {
-        throw new Error("Le coupon n'est pas associé à ce compte client");
-      }
-  
-      if(!amount || amount<0) {
-        throw new Error("le coupon ne contient pas de crédit");
-      }
-  
-      const note = code+':'+coupon.name;
+      // it's more safe to remove code after validation
+      await $stripe.coupons.del(code);
+      return coupon;
+    }catch(err) {
+      throw err;
+    }finally{
+      this.unlock(_method,'');
+    }
+  }
+
+  //
+  // consume coupon as a wallet credit for later use
+  async applyCredit(code:string) {
+    const _method = 'appcredit'+code;
+    this.lock(_method,'');
+    try{
+      const coupon = await this.readCoupon(code);
   
       //
       // it's more safe to remove code 
       await $stripe.coupons.del(code);
-      await this.updateCredit(amount/100,note);
+      await this.updateCredit(coupon.amount,coupon.note);
       return this;
     }catch(err) {
       throw err;

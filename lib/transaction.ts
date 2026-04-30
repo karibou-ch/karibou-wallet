@@ -32,6 +32,7 @@ const locked = new LRUCache({ttl:6000,max:1000});
 export interface PaymentOptions {
   charge?:boolean;
   prepaid?:boolean;
+  coupon?:string;
   oid:string;
   txgroup:string;
   email:string;
@@ -289,9 +290,20 @@ export  class  Transaction {
       return new Transaction(transaction);
     }
     
+    let couponCreditAmount = 0;
+    let couponCredit = null;
+    if(options.coupon) {
+      couponCredit = await customer.readCoupon(options.coupon);
+      if(couponCredit.amount > amount) {
+        throw new Error("Le coupon est plus grand que le montant de la facture");
+      }
+      couponCreditAmount = couponCredit.amount;
+    }
+
     //
     // available credit balance should be > 0
-    const balanceAmount = (card.issuer=="invoice")? amount: Math.min(Math.max(customer.balance,0),amount);
+    const availableBalanceAmount = Math.min(Math.max(customer.balance,0), Math.max(0, amount-couponCreditAmount));
+    const balanceAmount = (card.issuer=="invoice")? amount: round1cts(couponCreditAmount+availableBalanceAmount);
 
     // is the providerAmount <= 1 THEN the transaction is canceled   
     // assert providerAmount > 100
@@ -327,6 +339,10 @@ export  class  Transaction {
       if(options.prepaid) {
         params.metadata.exended_status = 'prepaid';
       }
+      if(couponCredit) {
+        params.metadata.coupon = couponCredit.code;
+        params.metadata.coupon_amount = Math.round(couponCredit.amount*100)+'';
+      }
 
       //
       // optional shipping
@@ -348,18 +364,27 @@ export  class  Transaction {
       // use customer negative credit instead of KngCard
       // updateCredit manage the max negative credit
       if (card.issuer == 'invoice') {       
-        // because balance amount and authorized amount use the same wallet 
-        await customer.updateCredit(-amount,'authorize:'+options.oid);
+        if(couponCredit) {
+          await customer.applyCoupon(couponCredit.code, amount);
+        }
+        const invoiceDebitAmount = couponCredit ? round1cts(amount-couponCreditAmount) : amount;
+
+        // because balance amount and authorized amount use the same wallet
+        await customer.updateCredit(-invoiceDebitAmount,'authorize:'+options.oid);
 
         // as invoice transaction
-        const transaction = createOrderPayment(customer.id,Math.round(balanceAmount*100),0,Math.round(balanceAmount*100),"authorized",options.oid);
+        const creditAmount = couponCredit ? couponCreditAmount : balanceAmount;
+        const metadata = couponCredit ? {
+          coupon: couponCredit.code,
+          coupon_amount: Math.round(couponCredit.amount*100)+''
+        } : undefined;
+        const transaction = createOrderPayment(customer.id,Math.round(amount*100),0,Math.round(creditAmount*100),"authorized",options.oid,metadata);
         return new Transaction(transaction);
       }
 
-      // FIXME cash balance on stripe wallet 
-      // CASH BALANCE create a direct charge
-      // manual paiement generate the status auth_paid
+      //
       // currency must be addressed
+      // DEPRECATED stripe cash balance is not a solution, use customer.balance instead
       else if (card.type == KngPayment.balance && customer.cashbalance.available) {
         params.payment_method_types = ['customer_balance'];
         params.payment_method_data= {
@@ -411,8 +436,18 @@ export  class  Transaction {
       // update credit balance when coupled with card
       // should store in stripe tx the amount used from customer balance
       if(balanceAmount>0) {
-        await customer.updateCredit(-balanceAmount,'authorize:'+options.oid);
+        if(couponCredit) {
+          await customer.applyCoupon(couponCredit.code, amount);
+        }
+        const balanceCreditAmount = round1cts(balanceAmount-couponCreditAmount);
+        if(balanceCreditAmount>0) {
+          await customer.updateCredit(-balanceCreditAmount,'authorize:'+options.oid);
+        }
         transaction.metadata.customer_credit = (Math.round(balanceAmount*100)+'');
+        if(couponCredit) {
+          transaction.metadata.coupon = couponCredit.code;
+          transaction.metadata.coupon_amount = Math.round(couponCredit.amount*100)+'';
+        }
         await $stripe.paymentIntents.update( transaction.id , { 
           metadata:transaction.metadata
         });  
@@ -645,11 +680,14 @@ export  class  Transaction {
         // IF invoice_paid was partialy refunded, the capture must include it in the final balance
         const status = "paid";
         const customer = await Customer.get(this.customer);
-        await customer.updateCredit(this.amount,'invoice_paid:'+this.oid);
+        const couponAmount = (parseInt(this._payment.metadata.coupon_amount||"0") / 100)
+          || ((balanceAuthAmount>0 && balanceAuthAmount<this.amount) ? balanceAuthAmount : 0);
+        const invoicePaidAmount = couponAmount>0 ? round1cts(this.amount-couponAmount) : this.amount;
+        await customer.updateCredit(invoicePaidAmount,'invoice_paid:'+this.oid);
 
         //
         // depending the balance position on credit or debit, invoice will be sent
-        this._payment = createOrderPayment(this.customer,Math.round(this.amount*100),Math.round(this.refunded*100),Math.round(balanceAuthAmount*100),status,this.oid);
+        this._payment = createOrderPayment(this.customer,Math.round(this.amount*100),Math.round(this.refunded*100),Math.round((couponAmount>0 ? couponAmount : balanceAuthAmount)*100),status,this.oid,this._payment.metadata);
         return this;
       }        
   
@@ -708,6 +746,33 @@ export  class  Transaction {
         }
     
         const customer = await Customer.get(this.customer);
+
+        const couponAmount = (parseInt(this._payment.metadata.coupon_amount||"0") / 100)
+          || ((balanceAuthAmount>0 && balanceAuthAmount<this.amount) ? balanceAuthAmount : 0);
+        if(couponAmount>0) {
+          const couponCaptureAmount = round1cts(Math.min(couponAmount, amount));
+          const authorizedDebitAmount = round1cts(this.amount-couponAmount);
+          const captureDebitAmount = round1cts(amount-couponCaptureAmount);
+          const balanceAdjustment = round1cts(authorizedDebitAmount-captureDebitAmount);
+          if(balanceAdjustment != 0) {
+            await customer.updateCredit(balanceAdjustment, 'capture:' + this.oid);
+          }
+
+          let status=(customer.balance<0)? "invoice":"paid";
+          this._payment = createOrderPayment(
+            this.customer,
+            Math.round(amount * 100),
+            0,
+            Math.round(couponCaptureAmount * 100),
+            status,
+            this.oid,
+            Object.assign({}, this._payment.metadata, {
+              coupon_amount: Math.round(couponCaptureAmount * 100)+''
+            })
+          );
+          return this;
+        }
+
         // use credit (invoice) OR debit (paid)
         let status=(customer.balance<0)? "invoice":"paid";
 
@@ -884,18 +949,22 @@ export  class  Transaction {
       // 
       // invoice 
       if(this.provider == "invoice"){
+        const couponAmount = parseInt(this._payment.metadata.coupon_amount||"0") / 100;
+        const restoreAmount = round1cts(Math.max(0, this.amount-couponAmount));
         const customer = await Customer.get(this.customer);
-        await customer.updateCredit(this.amount,'cancel:'+this.oid);                
-        this._payment = createOrderPayment(this.customer,Math.round(this.amount*100),Math.round(this.refunded*100),"voided",this.oid, this._payment.metadata);
+        await customer.updateCredit(restoreAmount,'cancel:'+this.oid);                
+        this._payment = createOrderPayment(this.customer,Math.round(this.amount*100),Math.round(this.refunded*100),0,"voided",this.oid, this._payment.metadata);
         // metadata are not saved ?
       }
       else if(this.provider == "stripe"){
         // Case of mixed amount
-        // credit amount already paid with this transaction      
+        // credit amount already paid with this transaction
+        const couponAmount = parseInt(this._payment.metadata.coupon_amount||"0") / 100;
         const balanceAuthAmount = parseInt(this._payment.metadata.customer_credit||"0") / 100;
-        if(balanceAuthAmount>0) {
+        const restoreAmount = round1cts(Math.max(0, balanceAuthAmount-couponAmount));
+        if(restoreAmount>0) {
           const customer = await Customer.get(this.customer);
-          await customer.updateCredit(balanceAuthAmount,'cancel:'+this.oid);                
+          await customer.updateCredit(restoreAmount,'cancel:'+this.oid);                
         }
         
         const metadata = this._payment.metadata;

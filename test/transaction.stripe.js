@@ -139,6 +139,61 @@ describe("Class transaction.stripe", function(){
     await tx.cancel();
   });
 
+  it("Transaction authorize consumes coupon as customer credit", async function() {
+    const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+    const coupon = await $stripe.coupons.create({
+      amount_off: 1000,
+      currency:'CHF'
+    });
+
+    const tx = await transaction.Transaction.authorize(defaultCustomer, card, 12, {
+      ...paymentOpts,
+      oid: 'coupon-01234',
+      coupon: coupon.id
+    });
+
+    tx.amount.should.equal(12);
+    tx.customerCredit.should.equal(10);
+    tx._payment.amount.should.equal(200);
+    tx._payment.metadata.coupon.should.equal(coupon.id);
+    tx._payment.metadata.coupon_amount.should.equal('1000');
+    tx._payment.metadata.customer_credit.should.equal('1000');
+
+    const refreshedCustomer = await customer.Customer.get(defaultCustomer.id);
+    refreshedCustomer.balance.should.equal(0);
+
+    await tx.capture(12);
+    tx.status.should.equal('paid');
+    tx.customerCredit.should.equal(10);
+
+    try{
+      await $stripe.coupons.del(coupon.id);
+      should.not.exist("dead zone");
+    }catch(err){
+      err.message.should.containEql('No such coupon');
+    }
+  });
+
+  it("Transaction cancel coupon authorization does not credit customer balance", async function() {
+    const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+    const coupon = await $stripe.coupons.create({
+      amount_off: 1000,
+      currency:'CHF'
+    });
+
+    const tx = await transaction.Transaction.authorize(defaultCustomer, card, 12, {
+      ...paymentOpts,
+      oid: 'coupon-cancel-01234',
+      coupon: coupon.id
+    });
+
+    tx.customerCredit.should.equal(10);
+    await tx.cancel();
+
+    const refreshedCustomer = await customer.Customer.get(defaultCustomer.id);
+    refreshedCustomer.balance.should.equal(0);
+  });
+
   it("Transaction load authorization", async function() {
     const tx = await transaction.Transaction.get(defaultTX);
     tx.authorized.should.equal(true);
