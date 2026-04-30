@@ -56,6 +56,8 @@ describe("Class transaction invoice coupon", function(){
     tx.status.should.equal("authorized");
     tx.amount.should.equal(12);
     tx.customerCredit.should.equal(10);
+    tx.creditNote.should.equal(10);
+    tx.report.credit_note.should.equal(10);
     tx._payment.metadata.coupon.should.equal(coupon.id);
     tx._payment.metadata.coupon_amount.should.equal('1000');
 
@@ -71,6 +73,8 @@ describe("Class transaction invoice coupon", function(){
     captured.status.should.equal("invoice");
     captured.amount.should.equal(12);
     captured.customerCredit.should.equal(10);
+    captured.creditNote.should.equal(10);
+    captured.report.credit_note.should.equal(10);
 
     defaultCustomer = await customer.Customer.get(captured.customer);
     defaultCustomer.balance.should.equal(-2);
@@ -84,6 +88,8 @@ describe("Class transaction invoice coupon", function(){
     paid.status.should.equal("paid");
     paid.amount.should.equal(12);
     paid.customerCredit.should.equal(10);
+    paid.creditNote.should.equal(10);
+    paid.report.credit_note.should.equal(10);
 
     defaultCustomer = await customer.Customer.get(paid.customer);
     defaultCustomer.balance.should.equal(0);
@@ -108,6 +114,7 @@ describe("Class transaction invoice coupon", function(){
       coupon: coupon.id
     });
 
+    tx.creditNote.should.equal(10);
     defaultCustomer = await customer.Customer.get(tx.customer);
     defaultCustomer.balance.should.equal(-2);
 

@@ -171,11 +171,22 @@ export  class  Transaction {
   }
   
   //
-  // cutomer credit equals the amount for invoice payment
-  // for mixed payment, credit is on metadata
+  // 🔥 Important:
+  // customerCredit is an internal transaction amount. On invoice payments it can
+  // represent the reserved/debited wallet amount, so it must not be displayed as
+  // a customer credit note. Use creditNote for invoice/PDF/UI display.
   get customerCredit() {
     const credit = parseFloat(this._payment.metadata.customer_credit||'0')/100;
     return credit;
+  }
+
+  //
+  // Public credit note amount applied to this transaction.
+  // `customer_credit` is a legacy/internal amount for invoice transactions;
+  // only explicit transaction credit metadata is safe to expose as a credit note.
+  get creditNote() {
+    const metadata = this._payment.metadata || {};
+    return parseFloat(metadata.credit_note||metadata.coupon_amount||'0')/100;
   }
 
 
@@ -229,6 +240,7 @@ export  class  Transaction {
       amount: this.amount,
       refunded: this.refunded,
       customer_credit:this.customerCredit,
+      credit_note:this.creditNote,
       updated:now.getTime(),
       provider:this.provider
     };
@@ -506,7 +518,9 @@ export  class  Transaction {
           const refund = parseFloat(tx[2]);
           const customer_id = tx[3];
           const customer_credit = parseFloat(tx[4]||"0");
-          const transaction:KngPaymentInvoice = createOrderPayment(customer_id,amount,refund,customer_credit,payment.status,oid);
+          const credit_note = parseFloat(tx[5]||"0");
+          const metadata = credit_note>0 ? {credit_note: credit_note+''} : undefined;
+          const transaction:KngPaymentInvoice = createOrderPayment(customer_id,amount,refund,customer_credit,payment.status,oid,metadata);
 
         return new Transaction(transaction);    
       } 
@@ -1103,7 +1117,11 @@ function createOrderPayment(customer_id,amount,refund,credit,status,oid, metadat
   //
   // transaction id string format: order_id::amount::customer_id
   const customer_credit = (credit);
+  const credit_note = metadata && (metadata.credit_note || metadata.coupon_amount) || '0';
   metadata = Object.assign(metadata||{},{order:oid,refund:refund, customer_credit});
+  if(credit_note !== '0') {
+    metadata.credit_note = credit_note;
+  }
   //console.log('---createOrderPayment',oid+'::'+(amount)+'::'+(refund||0)+'::'+customer_id+'::'+(customer_credit||0))
   const transaction:KngPaymentInvoice = {
     amount:amount,
@@ -1113,7 +1131,7 @@ function createOrderPayment(customer_id,amount,refund,credit,status,oid, metadat
     customer:customer_id,
     description:"#"+oid,
     metadata,
-    id:'kng_'+xor(oid+'::'+(amount)+'::'+(refund||0)+'::'+customer_id+'::'+(customer_credit||0)),
+    id:'kng_'+xor(oid+'::'+(amount)+'::'+(refund||0)+'::'+customer_id+'::'+(customer_credit||0)+'::'+(credit_note||0)),
     payment_method:'invoice',
     status:status,
     transfer_group:"#"+oid

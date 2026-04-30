@@ -172,6 +172,8 @@ describe("Class transaction with credit.balance mixed with Stripe", function(){
     tx.provider.should.equal("stripe");
     tx.amount.should.equal(20);
     tx.customerCredit.should.equal(15);
+    tx.creditNote.should.equal(5);
+    tx.report.credit_note.should.equal(5);
     tx._payment.metadata.customer_credit.should.equal('1500');
     tx._payment.metadata.coupon.should.equal(coupon.id);
     tx._payment.metadata.coupon_amount.should.equal('500');

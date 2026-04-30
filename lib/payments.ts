@@ -70,6 +70,7 @@ export interface KngPaymentInvoice {
   metadata:{
     order:string;
 		customer_credit?:string;
+		credit_note?:string;
 		coupon?:string;
 		coupon_amount?:string;
 		exended_status?:KngPaymentExendedStatus;

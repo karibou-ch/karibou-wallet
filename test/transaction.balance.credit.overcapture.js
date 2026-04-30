@@ -135,6 +135,9 @@ describe("Class transaction.overcapture (100% Invoice/Credit)", function(){
       tx.authorized.should.equal(true);
       tx.amount.should.equal(AUTH_AMOUNT);
       tx.provider.should.equal('invoice');
+      tx.customerCredit.should.equal(AUTH_AMOUNT);
+      tx.creditNote.should.equal(0);
+      tx.report.credit_note.should.equal(0);
     });
 
     it("AFTER AUTH: balance should be -50 CHF (blocked)", async function() {

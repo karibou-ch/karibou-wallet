@@ -154,6 +154,8 @@ describe("Class transaction.stripe", function(){
 
     tx.amount.should.equal(12);
     tx.customerCredit.should.equal(10);
+    tx.creditNote.should.equal(10);
+    tx.report.credit_note.should.equal(10);
     tx._payment.amount.should.equal(200);
     tx._payment.metadata.coupon.should.equal(coupon.id);
     tx._payment.metadata.coupon_amount.should.equal('1000');
@@ -165,6 +167,8 @@ describe("Class transaction.stripe", function(){
     await tx.capture(12);
     tx.status.should.equal('paid');
     tx.customerCredit.should.equal(10);
+    tx.creditNote.should.equal(10);
+    tx.report.credit_note.should.equal(10);
 
     try{
       await $stripe.coupons.del(coupon.id);
@@ -188,6 +192,7 @@ describe("Class transaction.stripe", function(){
     });
 
     tx.customerCredit.should.equal(10);
+    tx.creditNote.should.equal(10);
     await tx.cancel();
 
     const refreshedCustomer = await customer.Customer.get(defaultCustomer.id);
