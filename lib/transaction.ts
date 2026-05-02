@@ -286,6 +286,11 @@ export  class  Transaction {
       
       const transaction = await $stripe.paymentIntents.retrieve(intentId);
       
+      // TODO(wallet): verify transaction.customer matches the Karibou customer.
+      // TODO(wallet): verify transaction.amount matches the authorized checkout amount.
+      // TODO(wallet): verify transaction.currency is the expected checkout currency.
+      // FIXME(wallet): decide if Apple/Google must require manual capture only,
+      // or if succeeded should be accepted as prepaid fallback after Stripe validation.
       // Vérifier que le PaymentIntent est dans le bon état
       if (!['requires_capture', 'succeeded'].includes(transaction.status)) {
         throw new Error(`PaymentIntent invalide: status ${transaction.status}, attendu requires_capture ou succeeded`);
@@ -348,9 +353,6 @@ export  class  Transaction {
         },
       } as Stripe.PaymentIntentCreateParams;
 
-      if(options.prepaid) {
-        params.metadata.exended_status = 'prepaid';
-      }
       if(couponCredit) {
         params.metadata.coupon = couponCredit.code;
         params.metadata.coupon_amount = Math.round(couponCredit.amount*100)+'';
@@ -443,6 +445,15 @@ export  class  Transaction {
       //
       // NOTE: stripe tx must be done before the customer.balance update
       const transaction = await $stripe.paymentIntents.create(params);
+      let updateMetadata = false;
+
+      //
+      // `prepaid` is a Karibou status, only set it after Stripe has confirmed
+      // that the automatic-capture PaymentIntent really succeeded.
+      if(options.prepaid && transaction.status == 'succeeded') {
+        transaction.metadata.exended_status = 'prepaid';
+        updateMetadata = true;
+      }
   
       //
       // update credit balance when coupled with card
@@ -460,10 +471,14 @@ export  class  Transaction {
           transaction.metadata.coupon = couponCredit.code;
           transaction.metadata.coupon_amount = Math.round(couponCredit.amount*100)+'';
         }
-        await $stripe.paymentIntents.update( transaction.id , { 
-          metadata:transaction.metadata
-        });  
+        updateMetadata = true;
 
+      }
+
+      if(updateMetadata) {
+        await $stripe.paymentIntents.update( transaction.id , {
+          metadata:transaction.metadata
+        });
       }
 
       return new Transaction(transaction);

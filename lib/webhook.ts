@@ -270,7 +270,12 @@ export class Webhook {
       if (event.type =='payment_intent.succeeded' || event.type =='payment_intent.payment_failed') {
         const intent = event.data.object as Stripe.PaymentIntent;
         const transaction = await Transaction.get(xor(intent.id.toString()));
-        const customer = await Customer.get(xor(transaction.customer));
+        let customer:Customer = null;
+        try {
+          customer = await Customer.get(xor(transaction.customer));
+        } catch(err) {
+          console.log(`⚠️ Webhook ${event.type}: continue without customer for transaction ${transaction.id}`);
+        }
         const error = intent.last_payment_error?.message || false;
         return { event: event.type ,testing: false, transaction, customer, error} as WebhookStripe;
       }

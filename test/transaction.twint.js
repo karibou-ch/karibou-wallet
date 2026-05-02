@@ -73,6 +73,19 @@ describe("Class transaction.twint", function(){
     defaultTX = tx;
   });
 
+  it("Transaction create prepaid TWINT still requires Stripe confirmation", async function() {
+    const tx = await transaction.Transaction.authorize(defaultCustomer, card_twint, 2, {
+      ...paymentOpts,
+      oid: '01234-prepaid-twint',
+      prepaid: true
+    });
+
+    tx.status.should.equal('requires_payment_method');
+    tx.requiresAction.should.equal(false);
+    tx.paymentType.should.equal('twint');
+    should.not.exist(tx._payment.metadata.exended_status);
+  });
+
   it("Transaction load authorization and confirm it", async function() {
     const orderPayment = {
       status:defaultTX.status,

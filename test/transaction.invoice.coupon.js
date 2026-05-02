@@ -123,4 +123,42 @@ describe("Class transaction invoice coupon", function(){
     defaultCustomer = await customer.Customer.get(tx.customer);
     defaultCustomer.balance.should.equal(0);
   });
+
+  it("Authorize invoice with existing balance and transaction coupon debits only net invoice amount", async function() {
+    await defaultCustomer.updateCredit(20, 'test:existing-balance');
+    defaultCustomer = await customer.Customer.get(defaultCustomer.id);
+    defaultCustomer.balance.should.equal(20);
+
+    const coupon = await $stripe.coupons.create({
+      amount_off: 1000,
+      currency:'CHF'
+    });
+
+    const tx = await transaction.Transaction.authorize(defaultCustomer, default_card_invoice, 32, {
+      ...paymentOpts,
+      oid: 'invoice-balance-coupon-01234',
+      coupon: coupon.id
+    });
+
+    tx.provider.should.equal("invoice");
+    tx.status.should.equal("authorized");
+    tx.amount.should.equal(32);
+    tx.customerCredit.should.equal(10);
+    tx.creditNote.should.equal(10);
+
+    defaultCustomer = await customer.Customer.get(tx.customer);
+    defaultCustomer.balance.should.equal(-2);
+
+    await tx.cancel();
+
+    defaultCustomer = await customer.Customer.get(tx.customer);
+    defaultCustomer.balance.should.equal(20);
+
+    try{
+      await $stripe.coupons.del(coupon.id);
+      should.not.exist("dead zone");
+    }catch(err){
+      err.message.should.containEql('No such coupon');
+    }
+  });
 });
