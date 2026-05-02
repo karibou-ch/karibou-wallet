@@ -19,6 +19,14 @@ export interface KngCouponCredit {
   currency:string;
 }
 
+export interface WalletIntentOptions {
+  amount:number;
+  currency?:string;
+  capture_method?:'manual'|'automatic';
+  quoteKey?:string;
+  metadata?:{[key:string]:string};
+}
+
 export class Customer {
 
   private _sources:Stripe.Card[]|any;
@@ -447,23 +455,27 @@ export class Customer {
   * Creates a PaymentIntent for Apple Pay / Google Pay wallets
   * The intent is created with capture_method: 'manual' for 2-step payment
   * Overcapture is requested if enabled (MCC 5812 allows +20% for Visa/MC)
-  * @param amount - Amount in CHF (decimal)
+  * @param amount - Amount in CHF (decimal) or validated checkout quote options
   * @returns PaymentIntent with client_secret for wallet confirmation
   */
-  async createWalletIntent(amount: number) {
-    const overcaptureEnabled = Config.option('overcaptureEnabled');
+  async createWalletIntent(amount: number|WalletIntentOptions) {
+    const options:WalletIntentOptions = typeof amount == 'number'
+      ? { amount, currency: 'chf', capture_method: 'manual' }
+      : amount;
+    const captureMethod = options.capture_method || 'manual';
+    const overcaptureEnabled = captureMethod === 'manual' && Config.option('overcaptureEnabled');
     
     const params: Stripe.PaymentIntentCreateParams = {
-      amount: Math.round(amount * 100),
-      currency: 'chf',
+      amount: Math.round(options.amount * 100),
+      currency: (options.currency || 'chf').toLowerCase(),
       customer: this._id,
-      capture_method: 'manual',
+      capture_method: captureMethod,
       // Apple Pay / Google Pay utilisent des cartes tokenisées
       payment_method_types: ['card'],
-      metadata: {
+      metadata: Object.assign({
         wallet: 'pending',  // Sera mis à jour avec 'apple' ou 'google' lors de l'authorize
         uid: this._metadata.uid
-      }
+      }, options.quoteKey ? { quoteKey: options.quoteKey } : {}, options.metadata || {})
     };
 
     // Request overcapture si activé (MCC 5812: +20% Visa/MC, +15% Amex)
@@ -573,13 +585,13 @@ export class Customer {
 
   //
   // consume coupon as a transaction credit, without changing customer balance
-  async applyCoupon(code:string, amount:number):Promise<KngCouponCredit> {
+  async applyCoupon(code:string, amount?:number):Promise<KngCouponCredit> {
     const _method = 'appcoupon'+code;
     this.lock(_method,'');
     try{
-      amount = Math.round(amount * 100) / 100;
       const coupon = await this.readCoupon(code);
-      if(coupon.amount > amount) {
+      amount = typeof amount == 'number' ? Math.round(amount * 100) / 100 : null;
+      if(amount !== null && coupon.amount > amount) {
         throw new Error("Le coupon est plus grand que le montant de la facture");
       }
 
@@ -617,7 +629,7 @@ export class Customer {
   //
   // check if a payment method is valid
   // FIXME: missing test for checkMethods(addIntent:boolean)
-  async checkMethods(addIntent:boolean, amount?:number) {
+  async checkMethods(addIntent:boolean, amount?:number|WalletIntentOptions) {
 
     // 
     // make sure that we get the latest
@@ -636,12 +648,16 @@ export class Customer {
     //
     // PaymentIntent for Apple Pay / Google Pay wallets
     // Created when amount is provided (checkout context)
-    if(amount && amount > 0) {
+    const walletAmount = typeof amount == 'number' ? amount : amount && amount.amount;
+    if(walletAmount && walletAmount > 0) {
       try {
         const walletIntent = await this.createWalletIntent(amount);
         result.walletIntent = {
           id: walletIntent.id,
-          client_secret: walletIntent.client_secret
+          client_secret: walletIntent.client_secret,
+          amount: walletIntent.amount / 100,
+          currency: walletIntent.currency,
+          capture_method: walletIntent.capture_method
         };
       } catch(err) {
         // Silently fail - wallet payments are optional
@@ -670,7 +686,7 @@ export class Customer {
         result[method.alias] = {error : "La méthode de paiement a expirée", code: 3};
         continue;
       }
-      if(card.issuer=='cash' && amount > this.balance ){
+      if(card.issuer=='cash' && walletAmount > this.balance ){
         result[method.alias] = {error : "Votre portefeuille ne dispose pas de fonds suffisants pour effectuer un achat", code: 3};
         continue;
       }
@@ -756,7 +772,8 @@ export class Customer {
 
 
   //
-  // A customer’s cash balance represents funds that they can use for futur payment. 
+  // 📌 IMPORTANT: DEPRECATED stripe cash balance is not a solution, use customer.balance instead
+  // A customer’s cash balance represents funds that they can use for futur payment.
   // By default customer dosen't have access to his cash balance
   // We can activate his cash balance and also authorize a amount of credit 
   // that represents liability between us and the customer.
@@ -866,6 +883,7 @@ export class Customer {
       const creditbalance = this._metadata['creditbalance'];
 
       //
+      // 📌 IMPORTANT: DEPRECATED stripe cash balance is not a solution, use customer.balance instead
       // cashbalance
       const cashbalance = this._metadata['cashbalance'];
       if(cashbalance) {

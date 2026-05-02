@@ -285,25 +285,62 @@ export  class  Transaction {
         : unxor(card.payment_intent);
       
       const transaction = await $stripe.paymentIntents.retrieve(intentId);
-      
-      // TODO(wallet): verify transaction.customer matches the Karibou customer.
-      // TODO(wallet): verify transaction.amount matches the authorized checkout amount.
-      // TODO(wallet): verify transaction.currency is the expected checkout currency.
-      // FIXME(wallet): decide if Apple/Google must require manual capture only,
-      // or if succeeded should be accepted as prepaid fallback after Stripe validation.
-      // Vérifier que le PaymentIntent est dans le bon état
-      if (!['requires_capture', 'succeeded'].includes(transaction.status)) {
-        throw new Error(`PaymentIntent invalide: status ${transaction.status}, attendu requires_capture ou succeeded`);
+
+      try {
+        let couponCredit = null;
+        const transactionCustomer = typeof transaction.customer === 'string'
+          ? transaction.customer
+          : transaction.customer && transaction.customer.id;
+        if (transactionCustomer !== unxor(customer.id)) {
+          throw new Error("PaymentIntent invalide: customer mismatch");
+        }
+
+        const expectedAmount = Math.round(amount * 100);
+        if (transaction.amount !== expectedAmount) {
+          throw new Error(`PaymentIntent invalide: amount ${transaction.amount}, attendu ${expectedAmount}`);
+        }
+
+        const expectedCurrency = 'chf';
+        if (transaction.currency !== expectedCurrency) {
+          throw new Error(`PaymentIntent invalide: currency ${transaction.currency}, attendu ${expectedCurrency}`);
+        }
+
+        // Vérifier que le PaymentIntent est dans le bon état
+        if (!['requires_capture', 'succeeded'].includes(transaction.status)) {
+          throw new Error(`PaymentIntent invalide: status ${transaction.status}, attendu requires_capture ou succeeded`);
+        }
+
+        // Mettre à jour les metadata avec l'order ID
+        transaction.metadata.order = options.oid;
+        transaction.metadata.wallet = card.type; // 'apple' ou 'google'
+        if(options.coupon) {
+          transaction.metadata.coupon = options.coupon;
+        }
+        if(transaction.status == 'succeeded') {
+          transaction.metadata.exended_status = 'prepaid';
+        }
+        await $stripe.paymentIntents.update(transaction.id, {
+          metadata: transaction.metadata,
+          transfer_group: options.txgroup
+        });
+
+        if(options.coupon) {
+          couponCredit = await customer.applyCoupon(options.coupon);
+          transaction.metadata.coupon = couponCredit.code;
+          transaction.metadata.coupon_amount = Math.round(couponCredit.amount*100)+'';
+          await $stripe.paymentIntents.update(transaction.id, {
+            metadata: transaction.metadata
+          });
+        }
+      } catch(err) {
+        if(transaction.status == 'requires_capture') {
+          await $stripe.paymentIntents.cancel(transaction.id);
+        } else if(transaction.status == 'succeeded') {
+          await $stripe.refunds.create({ payment_intent: transaction.id });
+        }
+        throw err;
       }
-      
-      // Mettre à jour les metadata avec l'order ID
-      transaction.metadata.order = options.oid;
-      transaction.metadata.wallet = card.type; // 'apple' ou 'google'
-      await $stripe.paymentIntents.update(transaction.id, { 
-        metadata: transaction.metadata,
-        transfer_group: options.txgroup
-      });
-      
+
       return new Transaction(transaction);
     }
     

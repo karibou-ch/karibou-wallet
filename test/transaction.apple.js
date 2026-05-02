@@ -207,6 +207,167 @@ describe("Class transaction.apple (Apple Pay / Google Pay)", function(){
     });
   });
 
+  describe("Quote-backed wallet invariants", function() {
+    it("automatic capture quote becomes prepaid only after Stripe succeeds", async function() {
+      let walletIntent = await defaultCustomer.createWalletIntent({
+        amount: 10,
+        currency: 'chf',
+        capture_method: 'automatic',
+        quoteKey: 'quote-automatic-test'
+      });
+
+      walletIntent = await $stripe.paymentIntents.confirm(walletIntent.id, {
+        payment_method: testPaymentMethodId
+      });
+
+      walletIntent.status.should.equal('succeeded');
+
+      const appleCard = {
+        type: KngPayment.apple,
+        issuer: 'apple',
+        alias: 'apple',
+        payment_intent: walletIntent.id
+      };
+
+      const tx = await transaction.Transaction.authorize(
+        defaultCustomer,
+        appleCard,
+        10,
+        { ...paymentOpts, oid: 'apple-pay-prepaid-' + Date.now() }
+      );
+
+      tx.status.should.equal('prepaid');
+      tx._payment.capture_method.should.equal('automatic');
+      tx._payment.metadata.exended_status.should.equal('prepaid');
+
+      await tx.refund();
+    });
+
+    it("rejects wallet intent when amount does not match checkout quote", async function() {
+      let walletIntent = await defaultCustomer.createWalletIntent({
+        amount: 12,
+        currency: 'chf',
+        capture_method: 'manual',
+        quoteKey: 'quote-amount-mismatch-test'
+      });
+
+      walletIntent = await $stripe.paymentIntents.confirm(walletIntent.id, {
+        payment_method: testPaymentMethodId
+      });
+
+      const appleCard = {
+        type: KngPayment.apple,
+        issuer: 'apple',
+        alias: 'apple',
+        payment_intent: walletIntent.id
+      };
+
+      try {
+        await transaction.Transaction.authorize(
+          defaultCustomer,
+          appleCard,
+          11,
+          { ...paymentOpts, oid: 'apple-pay-mismatch-' + Date.now() }
+        );
+        should.fail('Expected amount mismatch to reject');
+      } catch(err) {
+        err.message.should.containEql('amount');
+      }
+
+      const canceledIntent = await $stripe.paymentIntents.retrieve(walletIntent.id);
+      canceledIntent.status.should.equal('canceled');
+    });
+
+    it("applies coupon after quote-backed wallet intent was authorized net of coupon", async function() {
+      const coupon = await $stripe.coupons.create({
+        amount_off: 1000,
+        currency:'CHF'
+      });
+
+      let walletIntent = await defaultCustomer.createWalletIntent({
+        amount: 2,
+        currency: 'chf',
+        capture_method: 'manual',
+        quoteKey: 'quote-coupon-net-test'
+      });
+
+      walletIntent = await $stripe.paymentIntents.confirm(walletIntent.id, {
+        payment_method: testPaymentMethodId
+      });
+
+      const appleCard = {
+        type: KngPayment.apple,
+        issuer: 'apple',
+        alias: 'apple',
+        payment_intent: walletIntent.id
+      };
+
+      const tx = await transaction.Transaction.authorize(
+        defaultCustomer,
+        appleCard,
+        2,
+        {
+          ...paymentOpts,
+          oid: 'apple-pay-coupon-net-' + Date.now(),
+          coupon: coupon.id
+        }
+      );
+
+      tx.amount.should.equal(2);
+      tx.creditNote.should.equal(10);
+      tx._payment.metadata.coupon.should.equal(coupon.id);
+      tx._payment.metadata.coupon_amount.should.equal('1000');
+
+      await tx.cancel();
+    });
+
+    it("cancels wallet intent when coupon was already consumed", async function() {
+      const coupon = await $stripe.coupons.create({
+        amount_off: 500,
+        currency:'CHF'
+      });
+
+      await defaultCustomer.applyCoupon(coupon.id, 20);
+
+      let walletIntent = await defaultCustomer.createWalletIntent({
+        amount: 15,
+        currency: 'chf',
+        capture_method: 'manual',
+        quoteKey: 'quote-coupon-consumed-test'
+      });
+
+      walletIntent = await $stripe.paymentIntents.confirm(walletIntent.id, {
+        payment_method: testPaymentMethodId
+      });
+
+      const appleCard = {
+        type: KngPayment.apple,
+        issuer: 'apple',
+        alias: 'apple',
+        payment_intent: walletIntent.id
+      };
+
+      try {
+        await transaction.Transaction.authorize(
+          defaultCustomer,
+          appleCard,
+          15,
+          {
+            ...paymentOpts,
+            oid: 'apple-pay-coupon-consumed-' + Date.now(),
+            coupon: coupon.id
+          }
+        );
+        should.fail('Expected consumed coupon to reject');
+      } catch(err) {
+        err.message.should.containEql('No such coupon');
+      }
+
+      const canceledIntent = await $stripe.paymentIntents.retrieve(walletIntent.id);
+      canceledIntent.status.should.equal('canceled');
+    });
+  });
+
   describe("Compatibilité legacy (ID xor)", function() {
     let walletIntent;
 
