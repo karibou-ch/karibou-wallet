@@ -330,7 +330,60 @@ describe("Class subscription.creation", function(){
     should.exist(contract);
     await contract.resumeManualy();
     contract.content.status.should.equal('active');
+    contract.content.pauseUntil.should.equal(0);
+    should.not.exist(contract._subscription.metadata.pausedUntil);
+    should.not.exist(contract._subscription.metadata.pausedFrom);
     // console.log('\n-- ',contract.status,contract.description,defaultCustomer.name, contract.pausedUntil);        
+  });
+
+  it("keeps active status when stale pausedUntil metadata remains", async function() {
+    const stalePausedUntil = new Date(Date.now() + 86400000 * 30).toISOString();
+    const stripeSubscription = {
+      id: 'sub_stale_paused_until',
+      customer: 'cus_stale_paused_until',
+      status: 'active',
+      billing_cycle_anchor: Math.floor(Date.now() / 1000) - 86400,
+      current_period_end: Math.floor(Date.now() / 1000) + 86400 * 7,
+      description: 'contrat:week:1234',
+      latest_invoice: null,
+      pause_collection: null,
+      metadata: {
+        uid: '1234',
+        dayOfWeek: '2',
+        fees: '0.06',
+        plan: 'customer',
+        address: JSON.stringify(shipping),
+        pausedUntil: stalePausedUntil
+      },
+      items: {
+        data: [{
+          id: 'si_stale_paused_until',
+          quantity: 1,
+          metadata: {
+            type: 'product',
+            sku: '1000013',
+            title: 'Petit panier de légumes',
+            hub: 'artamis',
+            part: '1 panier',
+            fees: '14'
+          },
+          plan: {
+            interval: 'week',
+            interval_count: 1
+          },
+          price: {
+            unit_amount: 1400,
+            currency: 'chf',
+            metadata: {},
+            product: 'prod_stale_paused_until'
+          }
+        }]
+      }
+    };
+
+    const contract = subscription.SubscriptionContract.fromWebhook(stripeSubscription);
+    contract.content.status.should.equal('active');
+    contract.content.pauseUntil.should.equal(0);
   });
 
 

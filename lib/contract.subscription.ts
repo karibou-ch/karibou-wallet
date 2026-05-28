@@ -318,7 +318,8 @@ export class SubscriptionContract {
     // SCÉNARIO 1: Pause manuelle prioritaire sur status Stripe.
     // Les pauses "solides" utilisent trial_end, donc metadata.pausedUntil
     // distingue une vraie pause d'un simple démarrage futur.
-    if(this._subscription.pause_collection || this._subscription.metadata.pausedUntil) {
+    if(this._subscription.pause_collection ||
+      (this._subscription.status === 'trialing' && this.metadataPausedUntil)) {
       return 'paused';
     }
     
@@ -380,9 +381,20 @@ export class SubscriptionContract {
     return result;
   }
 
+  private get metadataPausedUntil(): Date|0 {
+    if(!this._subscription.metadata.pausedUntil) {
+      return 0;
+    }
+    const pausedUntil = new Date(this._subscription.metadata.pausedUntil);
+    if(isNaN(pausedUntil.getTime()) || pausedUntil.getTime() <= Date.now()) {
+      return 0;
+    }
+    return pausedUntil;
+  }
+
   get pausedUntil(): Date|0 {
-    if(this._subscription.metadata.pausedUntil) {
-      return new Date(this._subscription.metadata.pausedUntil);
+    if(this._subscription.status === 'trialing' && this.metadataPausedUntil) {
+      return this.metadataPausedUntil;
     }
     if(this._subscription.pause_collection && this._subscription.pause_collection.resumes_at) {
       return new Date(this._subscription.pause_collection.resumes_at * 1000 );
@@ -614,10 +626,10 @@ export class SubscriptionContract {
 
   async resumeManualy(){
     const metadata = Object.assign({}, this._subscription.metadata, {
-      from: null,
-      to: null,
-      pausedFrom: null,
-      pausedUntil: null
+      from: '',
+      to: '',
+      pausedFrom: '',
+      pausedUntil: ''
     });
     this._subscription = await $stripe.subscriptions.update(
       this._subscription.id, {
