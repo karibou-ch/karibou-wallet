@@ -13,6 +13,11 @@ export interface WebhookStripe {
   customer?:Customer;
   contract?: SubscriptionContract;
   transaction?: Transaction;
+  upcoming?: {
+    created?: Date;
+    nextPaymentAttempt?: Date;
+    periodEnd?: Date;
+  };
   testing: boolean;
 }
 
@@ -98,6 +103,11 @@ export class Webhook {
       // on subscription upcoming 1-3 days before
       if(event.type == 'invoice.upcoming') {
         const invoice = event.data.object as Stripe.Invoice;
+        const upcoming = {
+          created: invoice.created ? new Date(invoice.created * 1000) : undefined,
+          nextPaymentAttempt: invoice.next_payment_attempt ? new Date(invoice.next_payment_attempt * 1000) : undefined,
+          periodEnd: invoice.period_end ? new Date(invoice.period_end * 1000) : undefined
+        };
 
         //
         // verify if payment method muste be updated
@@ -106,10 +116,10 @@ export class Webhook {
         const contract = await SubscriptionContract.get(subscriptionId);
         const testing = (contract.environnement == 'test')
         if(testing) {
-          return { event: event.type,testing, error:false};
+          return { event: event.type,testing, error:false, upcoming};
         }
         const customer = await contract.customer();        
-        return { event: event.type,testing, contract,customer,error:false} as WebhookStripe;
+        return { event: event.type,testing, contract,customer,error:false, upcoming} as WebhookStripe;
       }
 
       //
