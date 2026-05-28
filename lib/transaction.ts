@@ -435,7 +435,7 @@ export  class  Transaction {
 
       //
       // currency must be addressed
-      // DEPRECATED stripe cash balance is not a solution, use customer.balance instead
+      // 📌 IMPORTANT: 🔥 DEPRECATED stripe cash balance is not a solution, use customer.balance instead
       else if (card.type == KngPayment.balance && customer.cashbalance.available) {
         params.payment_method_types = ['customer_balance'];
         params.payment_method_data= {
