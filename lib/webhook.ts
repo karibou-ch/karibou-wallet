@@ -168,14 +168,19 @@ export class Webhook {
         const invoice = await $stripe.invoices.retrieve(event.data.object.id) as Stripe.Invoice;
         // Support both old and new Stripe API structure
         const subscriptionId = invoice.subscription || (invoice as any).parent?.subscription_details?.subscription;
+        if(!subscriptionId) {
+          return { event: event.type ,error:false} as WebhookStripe;
+        }
         const contract = await SubscriptionContract.get(subscriptionId);        
         const testing = (contract.environnement == 'test')
         if(testing) {
           return { event: event.type,testing,contract, error:false};
         }
 
-
-        const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        let transaction;
+        if(invoice.payment_intent) {
+          transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        }
         const customer = await Customer.get(invoice.customer.toString());
         //
         // set pending payment intent, customer have 23h to change payment method
@@ -190,12 +195,18 @@ export class Webhook {
         const invoice = event.data.object as Stripe.Invoice;
         // Support both old and new Stripe API structure
         const subscriptionId = invoice.subscription || (invoice as any).parent?.subscription_details?.subscription;
+        if(!subscriptionId) {
+          return { event: event.type ,error:false} as WebhookStripe;
+        }
         const contract = await SubscriptionContract.get(subscriptionId);        
         const testing = (contract.environnement == 'test')
         if(testing) {
           return { event: event.type,testing, contract, error:false};
         }
-        const transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        let transaction;
+        if(invoice.payment_intent) {
+          transaction = await Transaction.get(xor(invoice.payment_intent.toString()));
+        }
         const customer = await Customer.get(invoice.customer.toString());
 
         //

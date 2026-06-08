@@ -63,4 +63,58 @@ describe('Webhook: invoice.payment_failed', function() {
     }
   });
 
+  it("Should handle invoice.payment_failed webhook without payment_intent", async function() {
+    const mocks = stripeSubscription('invoice.payment_failed', {
+      customerEmail: "mock-payment-failed-no-intent@example.com",
+      karibouCustomerId: "67891",
+      invoiceOverrides: {
+        subscription: undefined,
+        payment_intent: undefined,
+        parent: {
+          type: "subscription_details",
+          subscription_details: {
+            subscription: "sub_1S51MvBTMLb4og7PqiKCHOCO"
+          }
+        }
+      }
+    });
+
+    // Mock dependencies
+    const webhook = require("../dist/webhook");
+    const originalSubscriptionContractGet = subscription.SubscriptionContract.get;
+    const originalCustomerGet = customer.Customer.get;
+    const originalTransactionGet = require("../dist/transaction").Transaction.get;
+    let transactionGetCalled = false;
+
+    subscription.SubscriptionContract.get = async function(id) {
+      return mocks.mockContract;
+    };
+
+    customer.Customer.get = async function(id) {
+      return mocks.mockCustomer;
+    };
+
+    require("../dist/transaction").Transaction.get = async function(id) {
+      transactionGetCalled = true;
+      return mocks.mockTransaction;
+    };
+
+    try {
+      const result = await webhook.Webhook.stripe(null, null, { event: mocks.event });
+
+      should.exist(result);
+      result.event.should.equal('invoice.payment_failed');
+      should.exist(result.contract);
+      should.exist(result.customer);
+      should.not.exist(result.transaction);
+      transactionGetCalled.should.equal(false);
+      result.error.should.equal(false);
+
+    } finally {
+      subscription.SubscriptionContract.get = originalSubscriptionContractGet;
+      customer.Customer.get = originalCustomerGet;
+      require("../dist/transaction").Transaction.get = originalTransactionGet;
+    }
+  });
+
 });

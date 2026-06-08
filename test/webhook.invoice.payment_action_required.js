@@ -75,5 +75,68 @@ describe("Webhook: invoice.payment_action_required", function() {
     }
   });
 
+  it("Should handle invoice.payment_action_required webhook without payment_intent", async function() {
+    const mocks = stripeSubscription('invoice.payment_action_required', {
+      customerEmail: "mock-action-required-no-intent@example.com",
+      karibouCustomerId: "11112",
+      invoiceOverrides: {
+        subscription: undefined,
+        payment_intent: undefined,
+        parent: {
+          type: "subscription_details",
+          subscription_details: {
+            subscription: "sub_1S51MvBTMLb4og7PqiKCHOCO"
+          }
+        }
+      }
+    });
+
+    // Mock the Stripe API call to retrieve invoice without payment_intent
+    const originalRetrieve = $stripe.invoices.retrieve;
+    $stripe.invoices.retrieve = async function(invoiceId) {
+      return {
+        ...mocks.event.data.object
+      };
+    };
+
+    // Mock dependencies
+    const webhook = require("../dist/webhook");
+    const originalSubscriptionContractGet = subscription.SubscriptionContract.get;
+    const originalCustomerGet = customer.Customer.get;
+    const originalTransactionGet = require("../dist/transaction").Transaction.get;
+    let transactionGetCalled = false;
+
+    subscription.SubscriptionContract.get = async function(id) {
+      return mocks.mockContract;
+    };
+
+    customer.Customer.get = async function(id) {
+      return mocks.mockCustomer;
+    };
+
+    require("../dist/transaction").Transaction.get = async function(id) {
+      transactionGetCalled = true;
+      return mocks.mockTransaction;
+    };
+
+    try {
+      const result = await webhook.Webhook.stripe(null, null, { event: mocks.event });
+
+      should.exist(result);
+      result.event.should.equal('invoice.payment_action_required');
+      should.exist(result.contract);
+      should.exist(result.customer);
+      should.not.exist(result.transaction);
+      transactionGetCalled.should.equal(false);
+      result.error.should.equal(false);
+
+    } finally {
+      $stripe.invoices.retrieve = originalRetrieve;
+      subscription.SubscriptionContract.get = originalSubscriptionContractGet;
+      customer.Customer.get = originalCustomerGet;
+      require("../dist/transaction").Transaction.get = originalTransactionGet;
+    }
+  });
+
 });
 
