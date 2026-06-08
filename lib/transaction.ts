@@ -9,7 +9,7 @@ import { strict as assert } from 'assert';
 import Stripe from 'stripe';
 import Config from './config';
 import { Customer } from './customer';
-import { KngCard, $stripe, stripeParseError, unxor, xor, KngPayment, KngPaymentInvoice, KngPaymentStatus, KngOrderPayment, round1cts } from './payments';
+import { KngCard, $stripe, stripeParseError, unxor, xor, KngPayment, KngPaymentInvoice, KngPaymentStatus, KngPaymentExendedStatus, KngOrderPayment, round1cts } from './payments';
 import { LRUCache } from 'lru-cache';
 
 const locked = new LRUCache({ttl:6000,max:1000});
@@ -616,13 +616,18 @@ export  class  Transaction {
    }
 
   //
-  // update status when transaction (capture_method) is automatic
-  // prepaid is an eq of paid  
-  async updateStatusPrepaidFor(oid) {    
-    const metadata = this._payment.metadata;
-    metadata.exended_status = 'prepaid';
-    metadata.order = oid;
-    this._payment = await $stripe.paymentIntents.update(this._payment.id, {metadata});  
+  // link an existing payment intent to a Karibou order, optionally changing extended status
+  async linkToOrder(oid, options: { status?: KngPaymentExendedStatus } = {}) {
+    const metadata = Object.assign({}, this._payment.metadata || {}, { order: oid && oid.toString() });
+    if(options.status) {
+      metadata.exended_status = options.status;
+    }
+    if(this.provider == 'invoice') {
+      this._payment.metadata = metadata;
+      return this;
+    }
+    this._payment = await $stripe.paymentIntents.update(this._payment.id, {metadata});
+    return this;
   }
 
   /**

@@ -108,7 +108,7 @@ describe("Class transaction.stripe.charge (prepaid)", function(){
     should.exist(tx.report.log);
     should.exist(tx.report.transaction);
 
-    await tx.updateStatusPrepaidFor('01234');
+    await tx.linkToOrder('01234', { status: 'prepaid' });
     // console.log('---- DBG report amount_capturable',tx._payment.amount_capturable);
     // console.log('---- DBG report amount_received',tx._payment.amount_received);
 
