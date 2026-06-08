@@ -2,8 +2,9 @@ import { strict as assert } from 'assert';
 import Stripe from 'stripe';
 import { $stripe, stripeParseError, crypto_randomToken, crypto_fingerprint, xor, unxor, 
          KngPayment, KngPaymentAddress, KngCard, CashBalance, CreditBalance, dateFromExpiry, parseYear, 
-         normalizePhone} from './payments';
+         normalizePhone, round1cts} from './payments';
 import Config, { nonEnumerableProperties } from './config';
+import { createVaucher, KngCreateCustomerVaucherOptions, KngCreatedCustomerVaucher } from './customer.vaucher';
 
 //
 // using memory cache limited to 1000 customer in same time for 24h
@@ -17,6 +18,7 @@ export interface KngCouponCredit {
   amount:number;
   amount_off:number;
   currency:string;
+  constraint?:string;
 }
 
 export interface WalletIntentOptions {
@@ -54,6 +56,10 @@ export class Customer {
 
   // handle previous customer attributes from customer.update webhook event
   public previous_attributes: any;
+
+  static async createVaucher(options: KngCreateCustomerVaucherOptions): Promise<KngCreatedCustomerVaucher> {
+    return createVaucher(options);
+  }
 
   /**
    * ## customer(id,email,displayName,uid)
@@ -569,6 +575,14 @@ export class Customer {
       throw new Error("Le coupon n'est pas associé à ce compte client");
     }
 
+    if(coupon.metadata.constraint) {
+      const matcher = new RegExp(coupon.metadata.constraint, 'i');
+      const matchable = [this._fname, this._lname, this._email].filter(Boolean);
+      if(!matchable.some(value => matcher.test(value))) {
+        throw new Error("Le coupon n'est pas associé à ce compte client");
+      }
+    }
+
     if(!amount || amount<0) {
       throw new Error("le coupon ne contient pas de crédit");
     }
@@ -577,9 +591,10 @@ export class Customer {
       code,
       name: coupon.name || '',
       note: code+':'+(coupon.name || ''),
-      amount: amount/100,
+      amount: round1cts(amount/100),
       amount_off: amount,
-      currency: coupon.currency || 'chf'
+      currency: coupon.currency || 'chf',
+      constraint: coupon.metadata.constraint || ''
     };
   }
 
