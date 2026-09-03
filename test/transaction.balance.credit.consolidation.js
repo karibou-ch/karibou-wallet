@@ -76,7 +76,8 @@ describe("transaction.balance.credit.consolidation", function(){
     //
     // warning, Customer.get use cache
     let testing = await $stripe.customers.retrieve(unxor(defaultCustomer.id));
-    testing.balance.should.equal(round1cts(initialBalance*100));
+    testing.balance.should.equal(0);
+    testing.metadata.kng_balance.should.equal(String(Math.round(initialBalance*100)));
 
     const cust = await customer.Customer.get(defaultCustomer.id);
     cust.balance.should.equal((initialBalance));

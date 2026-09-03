@@ -95,6 +95,7 @@ describe("customer.balance", function(){
       await cust.updateCredit(0);      
       testing = await $stripe.customers.retrieve(unxor(cust.id));
       testing.balance.should.equal(0);
+      testing.metadata.kng_balance.should.equal('0');
     }catch(err) {
       should.not.exist(err);
     }
@@ -109,7 +110,8 @@ describe("customer.balance", function(){
       await cust.updateCredit(35);      
       await cust.updateCredit(5);      
       testing = await $stripe.customers.retrieve(unxor(cust.id));
-      testing.balance.should.equal(4000);
+      testing.balance.should.equal(0);
+      testing.metadata.kng_balance.should.equal('4000');
 
       cust.balance.should.equal(40);
       await cust.updateCredit(-40);      
@@ -117,7 +119,8 @@ describe("customer.balance", function(){
       cust.balance.should.equal(40);
 
       testing = await $stripe.customers.retrieve(unxor(cust.id));
-      testing.balance.should.equal(4000);
+      testing.balance.should.equal(0);
+      testing.metadata.kng_balance.should.equal('4000');
     }catch(err) {
       console.log(err)
       should.not.exist(err);
@@ -152,6 +155,7 @@ describe("customer.balance", function(){
 
     let testing = await $stripe.customers.retrieve(unxor(cust.id));
     testing.balance.should.equal(0);
+    testing.metadata.kng_balance.should.equal('0');
 
   });
 
@@ -163,7 +167,30 @@ describe("customer.balance", function(){
 
     let testing = await $stripe.customers.retrieve(unxor(cust.id));
     testing.balance.should.equal(0);
+    testing.metadata.kng_balance.should.equal('0');
 
+  });
+
+  it("Customer.get migrates leftover Stripe invoice balance into metadata", async function() {
+    const cust = await customer.Customer.create("legacy-balance@email.com","Foo","Bar","022345",5678);
+    custCleanList.push(cust.id);
+
+    await $stripe.customers.update(unxor(cust.id), {
+      metadata: { kng_balance: '' }
+    });
+    await $stripe.customers.createBalanceTransaction(unxor(cust.id), {
+      amount: 4000,
+      currency: 'chf',
+      description: 'legacy-invoice-balance'
+    });
+    customer.Customer.clearCache(cust.id);
+
+    const migrated = await customer.Customer.get(cust.id);
+    migrated.balance.should.equal(40);
+
+    const testing = await $stripe.customers.retrieve(unxor(cust.id));
+    testing.balance.should.equal(0);
+    testing.metadata.kng_balance.should.equal('4000');
   });
 
 });
