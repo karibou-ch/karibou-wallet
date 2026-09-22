@@ -91,11 +91,12 @@ describe("Class subscription.payment", function(){
   });
 
 
-  // Simple weekly souscription 
-  // https://stripe.com/docs/billing/testing?dashboard-or-api=api#payment-failures
-  // failure 4000 0000 0000 0341
-  // 3ds  4000 0000 0000 3063
-  it("SubscriptionContract created require 3ds confirmation", async function() {
+  // 3220 = 3DS required. Wallet ne confirme pas: PI ouvert + client_secret pour confirmCardPayment.
+  it("B1 create now 3220 leaves PI open for confirmCardPayment", async function() {
+
+    await $stripe.customers.update(unxor(defaultCustomer.id), {
+      invoice_settings: { default_payment_method: method3ds.id }
+    });
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
@@ -107,12 +108,16 @@ describe("Class subscription.payment", function(){
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
-    //
-    // ✅ STRIPE v10 + API 2024-06-20: Status changed to requires_payment_method for 3DS
-    defaultSub.content.latestPaymentIntent.status.should.equal("requires_payment_method")
+    const open3ds = ["requires_confirmation", "requires_action"];
+    open3ds.should.containEql(defaultSub.content.latestPaymentIntent.status);
+    defaultSub.content.latestPaymentIntent.status.should.not.equal("succeeded")
   });
 
-  it("SubscriptionContract created with invalid payment method", async function() {
+  it("B1c create 0341 then mocha stand-in 4242 confirmCardPayment → active", async function() {
+
+    await $stripe.customers.update(unxor(defaultCustomer.id), {
+      invoice_settings: { default_payment_method: methodFailed.id }
+    });
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
@@ -124,22 +129,25 @@ describe("Class subscription.payment", function(){
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
-    //
-    // should be requires_action instead of requires_confirmation for unconfirmed capture
     defaultSub.content.status.should.equal('incomplete');
-    defaultSub.content.latestPaymentIntent.status.should.equal("requires_payment_method")
+    const openFailed = ["requires_confirmation", "requires_payment_method"];
+    openFailed.should.containEql(defaultSub.content.latestPaymentIntent.status);
 
     card = createTestMethodFromStripe(methodValid);
     defaultSub = await defaultSub.updatePaymentMethod(card);
+    should.not.exist(defaultSub.content.paymentMethod)
+    defaultSub.content.latestPaymentIntent.status.should.not.equal("succeeded")
+    // 4242: stand-in mocha de confirmCardPayment (pas de challenge 3DS).
+    await $stripe.paymentIntents.confirm(defaultSub.content.latestPaymentIntent.id);
+    defaultSub = await defaultSub.confirmPendingPayment(defaultSub.content.latestPaymentIntent.id);
     defaultSub.content.status.should.equal('active');
     defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
-    should.not.exist(defaultSub.content.paymentMethod)
     // DEPRECATED, paymentMethod is delegated to customer
     //defaultSub.content.paymentMethod.should.equal(card.id)
 
   });
 
-  it("SubscriptionContract created with invalid payment method + require 3ds confirmation", async function() {
+  it("C4 attach 3220 leaves PI open (no Node confirm)", async function() {
 
     // ✅ Nettoyer default_payment_method pour tester carte échouée
     await $stripe.customers.update(unxor(defaultCustomer.id), {
@@ -162,13 +170,12 @@ describe("Class subscription.payment", function(){
 
     card = createTestMethodFromStripe(method3ds);
     defaultSub = await defaultSub.updatePaymentMethod(card);
-    console.log('defaultSub.content.latestPaymentIntent',defaultSub.content.latestPaymentIntent.status);
-    // ✅ STRIPE v10 + API 2024-06-20: Avec customer default payment method, peut être succeeded ou requires_action
-    ['succeeded', 'requires_action'].should.containEql(defaultSub.content.latestPaymentIntent.status);
+    defaultSub.content.latestPaymentIntent.status.should.not.equal("succeeded")
+    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
   });
 
-  it("SubscriptionContract start on futur with valid payment method is incomplete", async function() {
+  it("B2a create trial_end exposes no invoice PI", async function() {
 
     // ✅ CONFIGURER default_payment_method comme dans le test "now"
     await $stripe.customers.update(unxor(defaultCustomer.id), {
@@ -212,7 +219,7 @@ describe("Class subscription.payment", function(){
     console.log('✅ latest_invoice de trial à 0 CHF, sans PaymentIntent');
   });
 
-  it("SubscriptionContract start now with valid payment method is active", async function() {
+  it("B1 after mocha stand-in 4242 confirmCardPayment subscription is active", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
@@ -228,6 +235,11 @@ describe("Class subscription.payment", function(){
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+    if (defaultSub.content.latestPaymentIntent.status !== "succeeded") {
+      // 4242: stand-in de confirmCardPayment (pas de challenge 3DS).
+      await $stripe.paymentIntents.confirm(defaultSub.content.latestPaymentIntent.id);
+      defaultSub = await defaultSub.confirmPendingPayment(defaultSub.content.latestPaymentIntent.id);
+    }
     defaultSub.content.status.should.equal('active')
     defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
 

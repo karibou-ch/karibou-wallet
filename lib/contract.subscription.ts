@@ -78,6 +78,7 @@ export interface Subscription {
   status:string;
   acceptUnpaid?:number;
   latestPaymentIntent:any;
+  pendingSetupIntent?:any;
   issue?:string;
   fees?:number;
   dayOfWeek?:number;
@@ -285,6 +286,20 @@ export class SubscriptionContract {
     };
   }
 
+  // Abo futur/trial: 3DS du SAVE → confirmCardSetup. Pas un charge.
+  get pendingSetupIntent() {
+    const setup = this._subscription.pending_setup_intent;
+    if (!setup || typeof setup === 'string') {
+      return null;
+    }
+    const setupIntent = setup as Stripe.SetupIntent;
+    return {
+      id: setupIntent.id,
+      status: setupIntent.status,
+      client_secret: setupIntent.client_secret
+    };
+  }
+
   /**
    * Retourne le statut de l'abonnement avec normalisation pour l'interface utilisateur
    * 
@@ -363,6 +378,7 @@ export class SubscriptionContract {
       services: this.serviceItems,
       plan:this._subscription.metadata.plan||"service",
       latestPaymentIntent:this.latestPaymentIntent,
+      pendingSetupIntent:this.pendingSetupIntent,
       acceptUnpaid:this.acceptUnpaid,
       description,
       paymentMethod: this.paymentMethod
@@ -645,8 +661,7 @@ export class SubscriptionContract {
 
 
   //
-  // validate required action (3ds)
-  // 2. payment intent is confirmed and/or card is updated
+  // Défaut customer + attache le PI ouvert. Confirm 3DS du charge: front confirmCardPayment.
 
   /*
    * FIXME: Automatiser la sélection du moyen de paiement via le client Stripe.
@@ -672,10 +687,10 @@ export class SubscriptionContract {
       throw new Error("Missing payment method");
     }
 
-    // 1. First, try to settle any pending payment with the new card.
+    // PI ouvert: attacher la carte, ne pas confirmer (3DS = Stripe.js).
     const paymentIntent = this.latestPaymentIntent;
     if (paymentIntent && paymentIntent.status !== 'succeeded') {
-      await $stripe.paymentIntents.confirm(paymentIntent.id, {
+      await $stripe.paymentIntents.update(paymentIntent.id, {
         payment_method: unxor(card.id)
       });
     }
@@ -797,11 +812,13 @@ export class SubscriptionContract {
       const options = {
         customer: unxor(customer.id),
         payment_behavior:'default_incomplete',
+        // Client présent pour CE charge (3DS ok). Mandat futur = addMethodIntent usage:off_session.
         off_session:false,
         description,
         proration_behavior:'none',
         items,
-        metadata 
+        metadata,
+        expand: ['latest_invoice.payment_intent', 'pending_setup_intent']
       } as Stripe.SubscriptionCreateParams;
 
       //
@@ -818,40 +835,10 @@ export class SubscriptionContract {
         // Note: customer.invoice_settings.default_payment_method is managed in customer.addMethod()
         // automatic_payment_methods n'est PAS supporté pour les subscriptions, même en v11.18.0+
         options.payment_behavior = 'default_incomplete';
-        options.expand = ['latest_invoice.payment_intent'];
       }
 
-      //
-      // https://stripe.com/docs/billing/testing
-      let subscription = await $stripe.subscriptions.create(options);  
-      
-      //
-      // WRONG status pending setup_intent 
-      // const setup_intent = subscription.pending_setup_intent as Stripe.SetupIntent;
-
-      // if(setup_intent) {
-      //   const setupDone = await $stripe.setupIntents.confirm(setup_intent.id);
-      //   subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
-      // }
-      const invoice = subscription.latest_invoice  as Stripe.Invoice;
-      const invoice_intent = invoice && invoice.payment_intent as Stripe.PaymentIntent;
-
-      if(invoice_intent ) {
-        //
-        // refused payment method trow an Error()
-        try{
-          const transaction = await $stripe.paymentIntents.confirm(invoice_intent.id);  
-          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
-          subscription.latest_invoice['payment_intent'] = transaction;
-          subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
-        }catch(err) { 
-          if (!err.payment_intent){
-            throw err;
-          }
-          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
-          subscription.latest_invoice['payment_intent'] = err.payment_intent;            
-        }
-      }
+      // PI / SetupIntent: confirm Stripe.js (confirmCardPayment / confirmCardSetup). Pas Node.
+      let subscription = await $stripe.subscriptions.create(options);
       return new SubscriptionContract(subscription);  
     }catch(err){
       throw parseError(err);
@@ -1038,12 +1025,13 @@ export class SubscriptionContract {
       const options = {
         customer: unxor(customer.id),
         payment_behavior:'default_incomplete',
+        // Client présent pour CE charge (3DS ok). Mandat futur = addMethodIntent usage:off_session.
         off_session:false,
         description,
         proration_behavior:'none',
         items:items,
         metadata,
-        expand: ['latest_invoice.payment_intent']
+        expand: ['latest_invoice.payment_intent', 'pending_setup_intent']
       } as Stripe.SubscriptionCreateParams;
 
       // Future start dates should delay the first invoice entirely.
@@ -1070,60 +1058,8 @@ export class SubscriptionContract {
         options.payment_behavior = 'default_incomplete';
       }
 
-      //
-      // https://stripe.com/docs/billing/testing
-      let subscription = await $stripe.subscriptions.create(options);  
-      
-      //
-      // always confirm pending invoice
-      // this will update the latest_invoice ?
-      const now = Date.now();
-      //
-      // WRONG status pending setup_intent 
-      // const setup_intent = subscription.pending_setup_intent as Stripe.SetupIntent;
-
-      // if(setup_intent) {
-      //   const setupDone = await $stripe.setupIntents.confirm(setup_intent.id);
-      //   subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
-      // }
-      const invoice = subscription.latest_invoice  as Stripe.Invoice;
-      const invoice_intent = invoice && invoice.payment_intent as Stripe.PaymentIntent;
-
-      if(invoice_intent ) {
-        //
-        // refused payment method trow an Error()
-        try{
-          const transaction = await $stripe.paymentIntents.confirm(invoice_intent.id);  
-          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
-          subscription.latest_invoice['payment_intent'] = transaction;
-          subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
-        }catch(err) { 
-          if (!err.payment_intent){
-            throw err;
-          }
-          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
-          subscription.latest_invoice['payment_intent'] = err.payment_intent;            
-        }
-      }
-     
-
-      //
-      //
-      // this.content.paymentIntent
-      // At this moment (SCA Life cycle)
-      // - payment can be pending (SCA auth, or other situation) 
-      // - With the value subscription.pending_setup_intent (as Stripe.SetupIntent)
-      // A) IF status === "requires_action"   
-      // - Frontend should confirm 
-      //   $stripe.confirmCardSetup(intent.client_secret)
-      //   - Display error.message in your UI.
-      //   - The setup has succeeded.
-      // B) IF status === "requires_payment_method"
-      // - Frontend - Customer collect new payment method (an other SCA Lifecycle)
-      //   $stripe.confirmCardSetup(intent.client_secret)
-      //   On success, inform K.API for the new payment (subscription.updatePaymentMethod)
-      //   On Error, inform K.API the subscription is cancel
-      //   After a while, subscription is deleted
+      // PI / SetupIntent: confirm Stripe.js (confirmCardPayment / confirmCardSetup). Pas Node.
+      let subscription = await $stripe.subscriptions.create(options);
       return new SubscriptionContract(subscription);  
     }catch(err) {
       throw parseError(err);
@@ -1250,36 +1186,14 @@ export class SubscriptionContract {
         items:items,
         metadata,
         proration_behavior:'none',
-        expand : ['latest_invoice.payment_intent']
+        expand : ['latest_invoice.payment_intent', 'pending_setup_intent']
       } as Stripe.SubscriptionUpdateParams;
 
-
-      let subscription = await $stripe.subscriptions.update(
+      // Items only. Un PI requires_action se confirme au front, pas ici.
+      this._subscription = await $stripe.subscriptions.update(
         unxor(this.id),
         options
       );
-      
-      const invoice = subscription.latest_invoice  as Stripe.Invoice;
-      const invoice_intent = invoice && invoice.payment_intent as Stripe.PaymentIntent;
-
-      if(invoice_intent ) {
-        //
-        // refused payment method trow an Error()
-        try{
-          const transaction = await $stripe.paymentIntents.confirm(invoice_intent.id);  
-          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
-          subscription.latest_invoice['payment_intent'] = transaction;
-          subscription = await $stripe.subscriptions.retrieve(subscription.id,{expand:['latest_invoice.payment_intent']});
-        }catch(err) { 
-          if (!err.payment_intent){
-            throw err;
-          }
-          subscription.latest_invoice = subscription.latest_invoice ||{} as Stripe.Invoice;
-          subscription.latest_invoice['payment_intent'] = err.payment_intent;            
-        }
-      }
-       
-      this._subscription = subscription;
       cache.set(this._subscription.id,this);
       return this;
     }catch(err){
@@ -1319,7 +1233,7 @@ export class SubscriptionContract {
     try{
       // ✅ FIX: Expand product to support Dashboard scenario (product.name=SKU, product.description=title)
       const stripe = await $stripe.subscriptions.retrieve(id,{
-        expand:['latest_invoice.payment_intent', 'items.data.price.product']
+        expand:['latest_invoice.payment_intent', 'pending_setup_intent', 'items.data.price.product']
       }) as any;
 
       //

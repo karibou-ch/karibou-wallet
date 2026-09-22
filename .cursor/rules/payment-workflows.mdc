@@ -1,0 +1,22 @@
+---
+description: Lire la spec des workflows de paiement avant toute modification SCA / abo / PI.
+globs: lib/contract.subscription.ts,lib/customer.ts,lib/transaction.ts,lib/payments.ts,lib/webhook.ts,test/contract.subscription*.js,test/transaction*.js,docs/payment-workflows.md
+alwaysApply: false
+---
+
+# Workflows de paiement
+
+Avant de modifier un create/update d’abo, un PaymentIntent, un SetupIntent, un webhook de facture ou un écran 3DS :
+
+1. Lire `docs/payment-workflows.md` (ce repo).
+2. S’aligner sur le chemin visé (A achat, B create, C update, D renouvellement).
+
+## Impératif
+
+- Wallet : **aucun** `paymentIntents.confirm` sur le PI de facture abo. Front : `confirmCardPayment`.
+- Save carte / start futur : `confirmCardSetup` (`pending_setup_intent` ou `addMethodIntent`).
+- TWINT : achat direct uniquement. Interdit sur subscription.
+- `issuer=invoice` : fallback Karibou hors Stripe. Pas de 3DS, pas de PI.
+- Update items / ancre : pas de 3DS UI. Recovery = mail + `latest_invoice`.
+- `resetBillingCycle` seulement si abo `active` ou `trialing`.
+- Mocha : confirm secret-key = stand-in **4242** seulement. `3220` s’arrête à PI ouvert + `client_secret`.

@@ -54,7 +54,7 @@ describe("Class transaction.stripe.charge (prepaid)", function(){
 
   //
   // https://stripe.com/docs/automated-testing
-  it("Transaction charge throw authenticationRequired", async function() {
+  it("A1 charge 3220 leaves PI requires_action (mocha does not complete 3DS)", async function() {
     const tx = await transaction.Transaction.authorize(defaultCustomer,card_authenticationRequired,2,paymentOpts)
     tx.should.property("status");
     tx.status.should.equal("requires_action");

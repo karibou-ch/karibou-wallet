@@ -20,7 +20,7 @@ const should = require('should');
 const cartItems = require('./fixtures/cart.items');
 
 describe("Class subscription.resetBillingCycle", function() {
-  this.timeout(15000);
+  this.timeout(25000);
 
   let defaultCustomer;
   let defaultPaymentAlias;
@@ -52,6 +52,13 @@ describe("Class subscription.resetBillingCycle", function() {
     defaultSub = await subscription.SubscriptionContract.create(
       defaultCustomer, card2, "week", 'now', items, subOptions
     );
+    const pi = defaultSub.content.latestPaymentIntent;
+    if (pi && pi.status !== "succeeded") {
+      // 4242 / mastercard prepaid: stand-in de confirmCardPayment, pas un parcours 3DS.
+      await $stripe.paymentIntents.confirm(pi.id);
+      defaultSub = await defaultSub.confirmPendingPayment(pi.id);
+    }
+    defaultSub.content.status.should.equal('active');
   });
 
   after(async function() {
@@ -72,7 +79,7 @@ describe("Class subscription.resetBillingCycle", function() {
   // VALIDATION TESTS
   // =========================================================================
 
-  it("resetBillingCycle throws error without toDate parameter", async function() {
+  it("C3 resetBillingCycle throws error without toDate parameter", async function() {
     try {
       await defaultSub.resetBillingCycle();
       throw new Error("Should have thrown");
@@ -81,7 +88,7 @@ describe("Class subscription.resetBillingCycle", function() {
     }
   });
 
-  it("resetBillingCycle throws error with null toDate", async function() {
+  it("C3 resetBillingCycle throws error with null toDate", async function() {
     try {
       await defaultSub.resetBillingCycle(null);
       throw new Error("Should have thrown");
@@ -90,7 +97,7 @@ describe("Class subscription.resetBillingCycle", function() {
     }
   });
 
-  it("resetBillingCycle throws error with invalid date object", async function() {
+  it("C3 resetBillingCycle throws error with invalid date object", async function() {
     try {
       await defaultSub.resetBillingCycle({ invalid: true });
       throw new Error("Should have thrown");
@@ -99,7 +106,7 @@ describe("Class subscription.resetBillingCycle", function() {
     }
   });
 
-  it("resetBillingCycle throws error with past date", async function() {
+  it("C3 resetBillingCycle throws error with past date", async function() {
     const pastDate = new Date(Date.now() - 86400000); // Yesterday
     try {
       await defaultSub.resetBillingCycle(pastDate);
@@ -113,27 +120,30 @@ describe("Class subscription.resetBillingCycle", function() {
   // FUNCTIONAL TESTS - 'now'
   // =========================================================================
 
-  it("resetBillingCycle('now') resets billing cycle to now", async function() {
-    const beforeReset = defaultSub.billing_cycle_anchor;
-    
-    await defaultSub.resetBillingCycle('now');
-    
-    const afterReset = defaultSub.billing_cycle_anchor;
-    
-    // The new anchor should be close to now (within 60 seconds)
-    const now = Date.now();
-    const diff = Math.abs(afterReset.getTime() - now);
-    diff.should.be.below(60000); // Within 60 seconds
-    
-    // Status should still be active or valid
-    ['active', 'trialing', 'incomplete'].should.containEql(defaultSub.status);
+  it("C3 resetBillingCycle('now') on active does not confirm invoice PI", async function() {
+    const orig = $stripe.paymentIntents.confirm;
+    let confirmCalled = false;
+    $stripe.paymentIntents.confirm = async function () {
+      confirmCalled = true;
+      return orig.apply(this, arguments);
+    };
+    try {
+      await defaultSub.resetBillingCycle('now');
+      confirmCalled.should.equal(false);
+      const now = Date.now();
+      const diff = Math.abs(defaultSub.billing_cycle_anchor.getTime() - now);
+      diff.should.be.below(60000);
+      ['active', 'trialing'].should.containEql(defaultSub.status);
+    } finally {
+      $stripe.paymentIntents.confirm = orig;
+    }
   });
 
   // =========================================================================
   // FUNCTIONAL TESTS - Future Date (trial_end)
   // =========================================================================
 
-  it("resetBillingCycle(futureDate) sets trial_end to future date", async function() {
+  it("C2 resetBillingCycle(futureDate) sets trial_end (no charge)", async function() {
     // Set to 7 days from now
     const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     
@@ -157,7 +167,7 @@ describe("Class subscription.resetBillingCycle", function() {
   // ADDITIONAL TESTS - Use fresh subscription to avoid trial conflicts
   // =========================================================================
 
-  it("resetBillingCycle returns the contract instance", async function() {
+  it("C3 resetBillingCycle returns the contract instance", async function() {
     // First reset to 'now' to clear any previous trial
     const result = await defaultSub.resetBillingCycle('now');
     
@@ -165,7 +175,7 @@ describe("Class subscription.resetBillingCycle", function() {
     result.id.should.equal(defaultSub.id);
   });
 
-  it("resetBillingCycle preserves subscription content after 'now' reset", async function() {
+  it("C3 resetBillingCycle preserves subscription content after 'now' reset", async function() {
     const contentBefore = defaultSub.content;
     const itemsBefore = contentBefore.items.length;
     const customerBefore = contentBefore.customer;
@@ -183,6 +193,24 @@ describe("Class subscription.resetBillingCycle", function() {
     
     // Plan should be preserved
     contentAfter.plan.should.equal(contentBefore.plan);
+  });
+
+  it("C3 resetBillingCycle rejects incomplete (no billing_cycle_anchor)", async function() {
+    const items = cartItems.filter(item => item.frequency == "week");
+    const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
+    const incomplete = await subscription.SubscriptionContract.create(
+      defaultCustomer, card, "week", 'now', items, { shipping, dayOfWeek: 2, fees: 0.06 }
+    );
+    incomplete.content.status.should.equal('incomplete');
+    try {
+      await incomplete.resetBillingCycle('now');
+      throw new Error("Should have thrown");
+    } catch (err) {
+      err.message.should.not.equal("Should have thrown");
+    }
+    try {
+      await incomplete.cancel();
+    } catch (e) { /* ignore */ }
   });
 });
 

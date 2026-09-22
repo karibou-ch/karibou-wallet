@@ -11,6 +11,9 @@ import { createVaucher, KngCreateCustomerVaucherOptions, KngCreatedCustomerVauch
 const cache = new (require("lru-cache").LRUCache)({ttl:1000 * 60 * 60 * 24,max:2000});
 const locked = new (require("lru-cache").LRUCache)({ttl:3000,max:1000});
 
+// Wallet ledger lives in metadata so Stripe does not apply it to subscription invoices.
+const WALLET_BALANCE_META = 'kng_balance';
+
 export interface KngCouponCredit {
   code:string;
   name:string;
@@ -118,6 +121,10 @@ export class Customer {
     return this._balance/100;
   }
 
+  private hasWalletBalanceMetadata() {
+    return hasWalletBalanceMetadata(this._metadata);
+  }
+
   //
   // updated is true, false or undefined
   get balanceRecentlyModified() {
@@ -218,7 +225,7 @@ export class Customer {
         merged.phone,
         stripe.invoice_settings.default_payment_method?.toString() || null,
         merged.cash_balance,
-        merged.balance,
+        parseWalletBalanceCents(merged.metadata, merged.balance),
         merged.metadata
       )
     });
@@ -247,7 +254,7 @@ export class Customer {
         email: email,
         name: fname + ' ' + lname,
         phone: normalizedPhone,
-        metadata: {uid,fname, lname},
+        metadata: {uid,fname, lname, [WALLET_BALANCE_META]: '0'},
         expand: ['cash_balance']
       });  
 
@@ -298,7 +305,7 @@ export class Customer {
   static async get(id) {
     if(typeof id == 'string') {
       const cached = Customer.lookup(id) as Customer;
-      if(cached){
+      if(cached && cached.hasWalletBalanceMetadata()){
         return cached;
       }  
     }
@@ -318,11 +325,12 @@ export class Customer {
         stripe.phone,
         stripe.invoice_settings?.default_payment_method,
         stripe.cash_balance,
-        stripe.balance,
+        parseWalletBalanceCents(stripe.metadata, stripe.balance),
         stripe.metadata
       ); 
       if(!stripeMock){
         await customer.listMethods();
+        await customer.persistWalletBalanceAndClearStripeInvoiceBalance(stripe.balance);
       }
       return customer;
     }catch(err) {
@@ -338,7 +346,7 @@ export class Customer {
         stripe.phone,
         stripe.invoice_settings?.default_payment_method,
         stripe.cash_balance,
-        stripe.balance,
+        parseWalletBalanceCents(stripe.metadata, stripe.balance),
         stripe.metadata
       ); 
       await customer.listMethods();
@@ -445,8 +453,10 @@ export class Customer {
 
   /**
   * ## customer.addMethodIntent()
-  * Creates a SetupIntent to add a new payment method (off_session) to the customer.
-  * The customer is linked to enable 3DS SCA exemption for future off-session payments.
+  * SetupIntent pour sauver une carte EN VUE des charges futures sans le client (MIT).
+  * `usage:'off_session'` = mandat renouvellements, pas un flag de présence sur ce paiement.
+  * Le client est là maintenant: le front confirme avec confirmCardSetup(client_secret).
+  * Distinct de subscriptions.create({ off_session:false }) = « client présent pour CETTE facture ».
   * @returns the SetupIntent object with client_secret for frontend confirmation
   */
   async addMethodIntent() {
@@ -655,7 +665,7 @@ export class Customer {
     };
 
     //
-    // SetupIntent for adding new card (3DS)
+    // SetupIntent: 3DS du SAVE (mandat off_session), pas le 3DS du charge de facture
     if(addIntent) {
       result.intent = await this.addMethodIntent();
     }
@@ -1081,21 +1091,18 @@ export class Customer {
       }
 
       //
-      // update customer credit 
+      // update customer credit in metadata, never on Stripe invoice balance
       const balance = Math.round((amount+this.balance)*100);
+      this._metadata[WALLET_BALANCE_META] = String(balance);
 
-      // FIXME replace updateCredit
-      // https://stripe.com/docs/api/customer_balance_transactions/create
-      const balanceTransaction = await $stripe.customers.createBalanceTransaction(
+      const stripe = await $stripe.customers.update(
         this._id,
-        {amount:Math.round(amount*100), currency: 'chf',description:note||''}
-      );  
+        {metadata: this._metadata}
+      );
 
-      // const customer = await $stripe.customers.update(
-      //   this._id,
-      //   {balance}
-      // );
+      this._metadata = stripe.metadata;
       this._balance = balance;
+      await this.clearStripeInvoiceBalance(stripe.balance);
 
       //
       // put this new customer in cache 4h
@@ -1187,7 +1194,45 @@ export class Customer {
 
   findMethodByAlias(alias) {
     return this._sources.find(card => card.alias == alias);
-  }  
+  }
+
+  private async persistWalletBalanceAndClearStripeInvoiceBalance(stripeInvoiceBalance:number) {
+    if(!hasWalletBalanceMetadata(this._metadata)) {
+      this._metadata[WALLET_BALANCE_META] = String(this._balance);
+      const stripe = await $stripe.customers.update(
+        this._id,
+        {metadata: this._metadata}
+      );
+      this._metadata = stripe.metadata;
+      stripeInvoiceBalance = stripe.balance;
+    }
+    await this.clearStripeInvoiceBalance(stripeInvoiceBalance);
+    cache.set(this.id, this);
+  }
+
+  private async clearStripeInvoiceBalance(stripeInvoiceBalance:number) {
+    if(!stripeInvoiceBalance) {
+      return;
+    }
+    await $stripe.customers.createBalanceTransaction(
+      this._id,
+      {amount: -stripeInvoiceBalance, currency: 'chf', description: 'migrate:kng_balance'}
+    );
+  }
+}
+
+function hasWalletBalanceMetadata(metadata) {
+  return !!(metadata && metadata[WALLET_BALANCE_META] != null && metadata[WALLET_BALANCE_META] !== '');
+}
+
+function parseWalletBalanceCents(metadata, fallbackCents) {
+  if(hasWalletBalanceMetadata(metadata)) {
+    const parsed = parseInt(metadata[WALLET_BALANCE_META], 10);
+    if(!isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return fallbackCents || 0;
 }
 
 //

@@ -21,13 +21,16 @@ describe("customer", function(){
   this.timeout(8000);
 
   const custCleanList = [];
+  const expMonth = 8;
+  const expYear = new Date().getFullYear() + 2;
+  const expLabel = expMonth + '/' + expYear;
 
   const pm_valid = {
     type: 'card',
     card: {
       number: '4242424242424242',
-      exp_month: 8,
-      exp_year: 2026,  // ✅ CORRECTION: 2026 au lieu de 2025
+      exp_month: expMonth,
+      exp_year: expYear,
       cvc: '314',
     },
   };
@@ -37,8 +40,8 @@ describe("customer", function(){
     type: 'card',
     card: {
       number: '4000000000009995',
-      exp_month: 8,
-      exp_year: 2026,  // ✅ CORRECTION: 2026 au lieu de 2025
+      exp_month: expMonth,
+      exp_year: expYear,
       cvc: '314',
     },
   };
@@ -262,6 +265,21 @@ describe("customer", function(){
 
   });
   
+  it("0 addMethodIntent creates SetupIntent usage off_session (no confirmCardSetup)", async function() {
+    const cust = custCleanList[0]
+      ? await customer.Customer.get(custCleanList[0])
+      : await customer.Customer.create("setupintent@email.com", "Foo", "Bar", "022345", 1234);
+    if (!custCleanList[0]) {
+      custCleanList.push(cust.id);
+    }
+    const intent = await cust.addMethodIntent();
+    should.exist(intent);
+    should.exist(intent.client_secret);
+    intent.usage.should.equal('off_session');
+    const openSetup = ["requires_payment_method", "requires_confirmation", "requires_action"];
+    openSetup.should.containEql(intent.status);
+  });
+
   it("Add payments methods using valid informations", async function() {
     config.option('debug',false);
     const cust = await customer.Customer.get(custCleanList[0]);
@@ -278,7 +296,7 @@ describe("customer", function(){
     payment.last4.should.equal('4242')
     payment.issuer.should.equal('visa')
     payment.funding.should.equal('credit')
-    payment.expiry.should.equal('8/2026')
+    payment.expiry.should.equal(expLabel)
     payment.issuer.should.equal('visa')
 
   });
@@ -309,10 +327,10 @@ describe("customer", function(){
 
     const cust = await customer.Customer.get(custCleanList[0]);
     const pm_update = Object.assign({},pm_valid);
-    pm_update.card.exp_year = 2026;
+    pm_update.card.exp_year = expYear;
     const pm = await $stripe.paymentMethods.create(pm_update);
     const payment = await cust.addMethod(pm.id);
-    payment.expiry.should.equal('8/2026')
+    payment.expiry.should.equal(expLabel)
     payment.issuer.should.equal('visa')
 
   });
@@ -326,7 +344,7 @@ describe("customer", function(){
 
   it("Add cashbalance payments method ", async function() {
     const cust = await customer.Customer.get(custCleanList[0]);
-    const cashbalance = await cust.createCashBalance(6,2026);
+    const cashbalance = await cust.createCashBalance(6,expYear);
     cashbalance.issuer.should.equal('cash');
     cashbalance.funding.should.equal('debit');
     dateFromExpiry(cashbalance.expiry).getMonth().should.equal(5);
@@ -349,7 +367,7 @@ describe("customer", function(){
 
   it("Update cashbalance payments method ", async function() {
     const cust = await customer.Customer.get(custCleanList[0]);
-    const cashbalance = await cust.createCashBalance(7,2026);
+    const cashbalance = await cust.createCashBalance(7,expYear);
     cashbalance.issuer.should.equal('cash');
     cashbalance.funding.should.equal('debit');
     dateFromExpiry(cashbalance.expiry).getMonth().should.equal(6);

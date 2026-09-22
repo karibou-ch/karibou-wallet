@@ -21,7 +21,7 @@ const { stripeSubscription } = require('./fixtures/webhook.stripe');
 describe("Webhook: invoice.payment_succeeded", function() {
   this.timeout(8000);
 
-  it("Should handle invoice.payment_succeeded webhook with mock payload", async function() {
+  it("D/B2b mock invoice.payment_succeeded returns contract", async function() {
     // Use the helper function to create mocks
     const mocks = stripeSubscription('invoice.payment_succeeded', {
       customerEmail: "mock-invoice-success@example.com",
@@ -82,7 +82,7 @@ describe("Webhook: invoice.payment_succeeded", function() {
     }
   });
 
-  it("Should handle invoice.payment_succeeded webhook with parent.subscription_details", async function() {
+  it("D/B2b mock invoice.payment_succeeded with parent.subscription_details", async function() {
     const mocks = stripeSubscription('invoice.payment_succeeded', {
       customerEmail: "mock-parent-subscription@example.com",
       karibouCustomerId: "33333",
