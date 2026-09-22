@@ -265,6 +265,21 @@ describe("customer", function(){
 
   });
   
+  it("0 addMethodIntent creates SetupIntent usage off_session (no confirmCardSetup)", async function() {
+    const cust = custCleanList[0]
+      ? await customer.Customer.get(custCleanList[0])
+      : await customer.Customer.create("setupintent@email.com", "Foo", "Bar", "022345", 1234);
+    if (!custCleanList[0]) {
+      custCleanList.push(cust.id);
+    }
+    const intent = await cust.addMethodIntent();
+    should.exist(intent);
+    should.exist(intent.client_secret);
+    intent.usage.should.equal('off_session');
+    const openSetup = ["requires_payment_method", "requires_confirmation", "requires_action"];
+    openSetup.should.containEql(intent.status);
+  });
+
   it("Add payments methods using valid informations", async function() {
     config.option('debug',false);
     const cust = await customer.Customer.get(custCleanList[0]);

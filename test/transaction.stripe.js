@@ -58,7 +58,7 @@ describe("Class transaction.stripe", function(){
 
   //
   // https://stripe.com/docs/automated-testing
-  it("Transaction authorization throw authenticationRequired", async function() {
+  it("A1 authorize 3220 leaves PI requires_action (mocha does not complete 3DS)", async function() {
     const tx = await transaction.Transaction.authorize(defaultCustomer,card_authenticationRequired,2,paymentOpts)
     tx.should.property("status");
     tx.status.should.equal("requires_action");

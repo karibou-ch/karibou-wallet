@@ -453,8 +453,10 @@ export class Customer {
 
   /**
   * ## customer.addMethodIntent()
-  * Creates a SetupIntent to add a new payment method (off_session) to the customer.
-  * The customer is linked to enable 3DS SCA exemption for future off-session payments.
+  * SetupIntent pour sauver une carte EN VUE des charges futures sans le client (MIT).
+  * `usage:'off_session'` = mandat renouvellements, pas un flag de présence sur ce paiement.
+  * Le client est là maintenant: le front confirme avec confirmCardSetup(client_secret).
+  * Distinct de subscriptions.create({ off_session:false }) = « client présent pour CETTE facture ».
   * @returns the SetupIntent object with client_secret for frontend confirmation
   */
   async addMethodIntent() {
@@ -663,7 +665,7 @@ export class Customer {
     };
 
     //
-    // SetupIntent for adding new card (3DS)
+    // SetupIntent: 3DS du SAVE (mandat off_session), pas le 3DS du charge de facture
     if(addIntent) {
       result.intent = await this.addMethodIntent();
     }

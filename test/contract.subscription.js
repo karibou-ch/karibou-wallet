@@ -27,6 +27,16 @@
  // https://stripe.com/docs/billing/testing/test-clocks?dashboard-or-api=api
  const weekdays = "dimanche_lundi_mardi_mercredi_jeudi_vendredi_samedi".split('_');
 
+ // Stand-in mocha de confirmCardPayment — valide seulement pour 4242 (pas de challenge 3DS).
+ async function confirmInvoiceOnSession(contract) {
+   const pi = contract.content.latestPaymentIntent;
+   if (!pi || pi.status === "succeeded") {
+     return contract;
+   }
+   await $stripe.paymentIntents.confirm(pi.id);
+   return contract.confirmPendingPayment(pi.id);
+ }
+
 describe("Class subscription.creation", function(){
   this.timeout(10000);
 
@@ -105,6 +115,7 @@ describe("Class subscription.creation", function(){
     // a contract with a valid date for X days has a success payment, 
     // but  incomplete status until the first day 
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
+    defaultSub = await confirmInvoiceOnSession(defaultSub);
 
     defaultSub.should.property("id");
     defaultSub.should.property("status");
@@ -154,6 +165,7 @@ describe("Class subscription.creation", function(){
     // a contract with a valid date for X days has a success payment, 
     // but  incomplete status until the first day 
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"2weeks",'now',items,subOptions)
+    defaultSub = await confirmInvoiceOnSession(defaultSub);
 
     defaultSub.should.property("id");
     defaultSub.should.property("status");
@@ -189,6 +201,7 @@ describe("Class subscription.creation", function(){
     const card = defaultCustomer.findMethodByAlias(defaultPaymentAlias);
     const subOptions = { shipping,dayOfWeek,fees };
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"month",'now',items,subOptions)
+    defaultSub = await confirmInvoiceOnSession(defaultSub);
 
     defaultSub.should.property("id");
     defaultSub.should.property("status");
@@ -401,7 +414,7 @@ describe("Class subscription.creation", function(){
   // invoice.upcoming
 
   // Simple weekly souscription 
-  it("Webhook.stripe invoice.upcoming", async function() {
+  it("D mock invoice.upcoming returns contract", async function() {
     config.option('debug',true);
     const EVENT_upcoming = {
       type: 'invoice.upcoming',
@@ -419,7 +432,7 @@ describe("Class subscription.creation", function(){
   });
 	
 
-  it("Webhook.stripe invoice.payment_failed", async function() {
+  it("D mock invoice.payment_failed returns contract", async function() {
     config.option('debug',true);
     const EVENT_payment_failed = {
       type: 'invoice.payment_failed',
@@ -439,7 +452,7 @@ describe("Class subscription.creation", function(){
   });
 	
 
-  it("Webhook.stripe invoice.payment_succeeded", async function() {
+  it("D/B2b mock invoice.payment_succeeded returns contract", async function() {
     config.option('debug',true);
     const EVENT_payment_succeeded = {
       type: 'invoice.payment_succeeded',

@@ -20,7 +20,7 @@ const { stripeSubscription } = require('./fixtures/webhook.stripe');
 describe('Webhook: invoice.payment_failed', function() {
   this.timeout(8000);
 
-  it("Should handle invoice.payment_failed webhook", async function() {
+  it("D mock invoice.payment_failed returns contract", async function() {
     const mocks = stripeSubscription('invoice.payment_failed', {
       customerEmail: "mock-payment-failed@example.com",
       karibouCustomerId: "67890"
@@ -63,7 +63,7 @@ describe('Webhook: invoice.payment_failed', function() {
     }
   });
 
-  it("Should handle invoice.payment_failed webhook without payment_intent", async function() {
+  it("D mock invoice.payment_failed without payment_intent", async function() {
     const mocks = stripeSubscription('invoice.payment_failed', {
       customerEmail: "mock-payment-failed-no-intent@example.com",
       karibouCustomerId: "67891",

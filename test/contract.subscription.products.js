@@ -60,10 +60,15 @@ describe("Class subscription.products", function(){
       invoice_settings: { default_payment_method: methodValid.id }
     });
     
-    const sub = await subscription.SubscriptionContract.createOnlyFromService(defaultCustomer,card,"month",products[0]);
+    let sub = await subscription.SubscriptionContract.createOnlyFromService(defaultCustomer,card,"month",products[0]);
 
     should.exist(sub);
     should.exist(sub.content);
+    if (sub.content.latestPaymentIntent && sub.content.latestPaymentIntent.status !== "succeeded") {
+      // 4242: stand-in de confirmCardPayment (carte non enrôlée 3DS).
+      await $stripe.paymentIntents.confirm(sub.content.latestPaymentIntent.id);
+      sub = await sub.confirmPendingPayment(sub.content.latestPaymentIntent.id);
+    }
     sub.content.status.should.equal('active');
     sub.content.plan.should.equal('patreon');
     sub.content.patreon.length.should.equal(1);

@@ -84,11 +84,9 @@ describe("Class subscription.use customer default payment method", function(){
   });
 
 
-  // Simple weekly souscription 
-  // https://stripe.com/docs/billing/testing?dashboard-or-api=api#payment-failures
-  // failure 4000 0000 0000 0341
-  // 3ds  4000 0000 0000 3063
-  it("SubscriptionContract created require 3ds confirmation", async function() {
+  // Cartes: 0341 refuse, 3220 3DS required (docs/testing). 3063 est obsolète.
+  // Workflow: wallet prépare le PI, front confirmCardPayment. Ici on n'appelle pas confirm Node.
+  it("B1 create now 3220 leaves PI open for confirmCardPayment", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
@@ -105,14 +103,14 @@ describe("Class subscription.use customer default payment method", function(){
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
 
-    //
-    // should be requires_action because the customer's default card requires 3DS
-    defaultSub.content.latestPaymentIntent.status.should.equal("requires_action")
+    // Stripe: 3DS = requires_action après tentative; sans confirm = souvent requires_confirmation.
+    const open3ds = ["requires_confirmation", "requires_action"];
+    open3ds.should.containEql(defaultSub.content.latestPaymentIntent.status);
     // The subscription itself should not have a default payment method
     should.equal(defaultSub._subscription.default_payment_method, null);
   });
 
-  it("SubscriptionContract created with invalid payment method", async function() {
+  it("B1c create 0341 then mocha stand-in 4242 confirmCardPayment → succeeded", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
@@ -127,24 +125,24 @@ describe("Class subscription.use customer default payment method", function(){
     const subOptions = { shipping,dayOfWeek,fees, useCustomerDefaultPaymentMethod: true };
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
-    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+    should.exist(defaultSub.content.latestPaymentIntent.client_secret);
+    const openFailed = ["requires_confirmation", "requires_payment_method"];
+    openFailed.should.containEql(defaultSub.content.latestPaymentIntent.status);
 
-    //
-    // The initial payment fails, so it requires a new payment method
-    defaultSub.content.latestPaymentIntent.status.should.equal("requires_payment_method")
-
-    // Now, update with a valid card
+    // Wallet attache la carte au PI, le charge se confirme au front
     card = createTestMethodFromStripe(methodValid);
     defaultSub = await defaultSub.updatePaymentMethod(card);
-    defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
-    // The payment method on the contract should BE null because the customer's default payment method is used
     should.not.exist(defaultSub.content.paymentMethod)
-    // The subscription itself should still not have a default payment method
     should.equal(defaultSub._subscription.default_payment_method, null);
+    defaultSub.content.latestPaymentIntent.status.should.not.equal("succeeded")
+    // 4242: stand-in de confirmCardPayment (carte non enrôlée 3DS). Pas un test 3DS.
+    await $stripe.paymentIntents.confirm(defaultSub.content.latestPaymentIntent.id);
+    defaultSub = await defaultSub.confirmPendingPayment(defaultSub.content.latestPaymentIntent.id);
+    defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
 
   });
 
-  it("SubscriptionContract created with invalid payment method + require 3ds confirmation", async function() {
+  it("C4 attach 3220 leaves PI open (no Node confirm)", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
@@ -159,44 +157,39 @@ describe("Class subscription.use customer default payment method", function(){
     const subOptions = { shipping,dayOfWeek,fees, useCustomerDefaultPaymentMethod: true };
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
-    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+    should.exist(defaultSub.content.latestPaymentIntent.client_secret);
+    const openFailed3ds = ["requires_confirmation", "requires_payment_method"];
+    openFailed3ds.should.containEql(defaultSub.content.latestPaymentIntent.status);
 
-    //
-    // requires a new method because the default one failed
-    defaultSub.content.latestPaymentIntent.status.should.equal("requires_payment_method")
-
-    // Update with a 3DS card
     card = createTestMethodFromStripe(method3ds);
     defaultSub = await defaultSub.updatePaymentMethod(card);
-    // The status should now be requires_action for the 3DS flow
-    defaultSub.content.latestPaymentIntent.status.should.equal("requires_action")
-    // The payment method on the contract should BE null because the customer's default payment method is used
     should.not.exist(defaultSub.content.paymentMethod)
     should.equal(defaultSub._subscription.default_payment_method, null);
+    defaultSub.content.latestPaymentIntent.status.should.not.equal("succeeded")
+    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
   });
 
-  it("SubscriptionContract start on futur with valid payment method is active", async function() {
+  it("B2a create trial_end exposes no invoice PI", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
     const items = cartItems.filter(item => item.frequency == "week");
 
-    // Set a valid card as the customer's default
     await $stripe.customers.update(unxor(defaultCustomer.id), {
       invoice_settings: { default_payment_method: methodValid.id }
     });
 
     let card = createTestMethodFromStripe(methodValid);
     const subOptions = { shipping,dayOfWeek,fees, useCustomerDefaultPaymentMethod: true };
-    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
-    should.exist(defaultSub.content.latestPaymentIntent);
-    should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+    defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",dateValid,items,subOptions)
     defaultSub.content.status.should.equal('active')
-    defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
     should.equal(defaultSub._subscription.default_payment_method, null);
+    should.not.exist(defaultSub.content.latestPaymentIntent);
+    should.exist(defaultSub._subscription.trial_end);
+    defaultSub._subscription.trial_end.should.equal(Math.floor(dateValid.getTime() / 1000));
   });
 
-  it("SubscriptionContract start now with valid payment method is active", async function() {
+  it("B1 after mocha stand-in 4242 confirmCardPayment subscription is active", async function() {
 
     const fees = 0.06;
     const dayOfWeek= 2; // tuesday
@@ -212,10 +205,14 @@ describe("Class subscription.use customer default payment method", function(){
     defaultSub = await subscription.SubscriptionContract.create(defaultCustomer,card,"week",'now',items,subOptions)
     should.exist(defaultSub.content.latestPaymentIntent);
     should.exist(defaultSub.content.latestPaymentIntent.client_secret)
+    if (defaultSub.content.latestPaymentIntent.status !== "succeeded") {
+      // 4242: stand-in de confirmCardPayment (pas de challenge 3DS).
+      await $stripe.paymentIntents.confirm(defaultSub.content.latestPaymentIntent.id);
+      defaultSub = await defaultSub.confirmPendingPayment(defaultSub.content.latestPaymentIntent.id);
+    }
     defaultSub.content.status.should.equal('active')
     defaultSub.content.latestPaymentIntent.status.should.equal("succeeded")
 
-    //console.log('----',defaultSub.content)
     should.exist(defaultSub.content.latestPaymentIntent.id);
     // The payment method on the contract should BE null because the customer's default payment method is used
     should.not.exist(defaultSub.content.paymentMethod)

@@ -41,7 +41,7 @@ describe("Class subscription.creation.future-start", function() {
     }
   });
 
-  it("SubscriptionContract create weekly with future startDate keeps billing_cycle_anchor", async function() {
+  it("B2a create trial_end keeps billing_cycle_anchor (no invoice PI)", async function() {
     const fees = 0.06;
     const dayOfWeek = 2;
     const items = cartItems.filter(item => item.frequency == "week");
@@ -63,5 +63,6 @@ describe("Class subscription.creation.future-start", function() {
     should.exist(futureSub._subscription.billing_cycle_anchor);
     const expectedTimestamp = Math.floor(futureDate.getTime() / 1000);
     futureSub._subscription.billing_cycle_anchor.should.equal(expectedTimestamp);
+    should.not.exist(futureSub.content.latestPaymentIntent);
   });
 });

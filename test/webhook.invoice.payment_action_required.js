@@ -21,7 +21,7 @@ const { stripeSubscription } = require('./fixtures/webhook.stripe');
 describe("Webhook: invoice.payment_action_required", function() {
   this.timeout(8000);
 
-  it("Should handle invoice.payment_action_required webhook", async function() {
+  it("D mock invoice.payment_action_required returns contract + client_secret", async function() {
     const mocks = stripeSubscription('invoice.payment_action_required', {
       customerEmail: "mock-action-required@example.com",
       karibouCustomerId: "11111"
@@ -75,7 +75,7 @@ describe("Webhook: invoice.payment_action_required", function() {
     }
   });
 
-  it("Should handle invoice.payment_action_required webhook without payment_intent", async function() {
+  it("D mock invoice.payment_action_required without payment_intent", async function() {
     const mocks = stripeSubscription('invoice.payment_action_required', {
       customerEmail: "mock-action-required-no-intent@example.com",
       karibouCustomerId: "11112",
